@@ -1626,6 +1626,29 @@ config :libcluster,
     ]
   ]
 
+######################
+### Database Repos ###
+######################
+
+alias Explorer.Repo.ConfigHelper, as: ExplorerConfigHelper
+
+pool_size = ConfigHelper.parse_integer_env_var("POOL_SIZE", 50)
+queue_target = ConfigHelper.parse_integer_env_var("DATABASE_QUEUE_TARGET", 50)
+
+# Configures primary database
+config :explorer, Explorer.Repo,
+  url: System.get_env("DATABASE_URL"),
+  pool_size: pool_size,
+  ssl: ExplorerConfigHelper.ssl_enabled?(),
+  queue_target: queue_target
+
+# Configures API read-only replica database
+config :explorer, Explorer.Repo.Replica1,
+  url: ExplorerConfigHelper.get_api_db_url(),
+  pool_size: ConfigHelper.parse_integer_env_var("POOL_SIZE_API", 50),
+  ssl: ExplorerConfigHelper.ssl_enabled?(),
+  queue_target: queue_target
+
 Code.require_file("#{config_env()}.exs", "config/runtime")
 
 for config <- "../apps/*/config/runtime/#{config_env()}.exs" |> Path.expand(__DIR__) |> Path.wildcard() do
