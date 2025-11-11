@@ -28,7 +28,9 @@ defmodule Explorer.ReleaseTasks do
   end
 
   def create do
-    Enum.each(repos(), &create_db_for/1)
+    repos()
+    |> Enum.reject(&is_read_only_repo?/1)
+    |> Enum.each(&create_db_for/1)
   end
 
   def migrate(_argv) do
@@ -77,7 +79,9 @@ defmodule Explorer.ReleaseTasks do
   end
 
   defp run_migrations do
-    Enum.each(repos(), &run_migrations_for/1)
+    repos()
+    |> Enum.reject(&is_read_only_repo?/1)
+    |> Enum.each(&run_migrations_for/1)
   end
 
   defp run_migrations_for(repo) do
@@ -114,5 +118,11 @@ defmodule Explorer.ReleaseTasks do
     priv_dir = "#{:code.priv_dir(app)}"
 
     Path.join([priv_dir, repo_underscore, filename])
+  end
+
+  # Check if a repo is configured as read-only
+  # Read-only replicas should not have migrations run against them
+  defp is_read_only_repo?(repo) do
+    Keyword.get(repo.config, :read_only, false)
   end
 end
