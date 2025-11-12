@@ -122,7 +122,11 @@ defmodule Explorer.ReleaseTasks do
 
   # Check if a repo is configured as read-only
   # Read-only replicas should not have migrations run against them
+  # We check the module name for "Replica" as a simple, reliable indicator
   defp is_read_only_repo?(repo) do
-    Keyword.get(repo.config(), :read_only, false)
+    repo
+    |> Module.split()
+    |> List.last()
+    |> String.contains?("Replica")
   end
 end

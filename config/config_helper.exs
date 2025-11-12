@@ -7,8 +7,8 @@ defmodule ConfigHelper do
   alias Utils.ConfigHelper
 
   def repos do
-    base_repos = [Explorer.Repo, Explorer.Repo.Account]
-    
+    base_repos = [Explorer.Repo, Explorer.Repo.Account, Explorer.Repo.Replica1]
+
     chain_type_repo =
       %{
         arbitrum: Explorer.Repo.Arbitrum,

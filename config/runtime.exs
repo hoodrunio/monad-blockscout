@@ -271,21 +271,9 @@ disable_exchange_rates? =
 
 coin = System.get_env("COIN") || "ETH"
 
-# Build ecto_repos list with conditional Replica1 inclusion
-base_ecto_repos = ConfigHelper.repos()
-
-# Add Replica1 if DATABASE_READ_ONLY_API_URL is set AND we're NOT running migrations
-# RELEASE_COMMAND is set to "migrate" only during db-migration init container
-ecto_repos_with_replica =
-  if System.get_env("DATABASE_READ_ONLY_API_URL") && System.get_env("RELEASE_COMMAND") != "migrate" do
-    base_ecto_repos ++ [Explorer.Repo.Replica1]
-  else
-    base_ecto_repos
-  end
-
 config :explorer,
   mode: app_mode,
-  ecto_repos: ecto_repos_with_replica,
+  ecto_repos: ConfigHelper.repos(),
   chain_type: ConfigHelper.chain_type(),
   coin: coin,
   coin_name: System.get_env("COIN_NAME") || "ETH",
