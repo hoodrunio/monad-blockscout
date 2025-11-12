@@ -8,10 +8,7 @@ defmodule ConfigHelper do
 
   def repos do
     base_repos = [Explorer.Repo, Explorer.Repo.Account]
-
-    # NOTE: Replica1 is added dynamically in config/runtime.exs based on
-    # DATABASE_READ_ONLY_API_URL env var and RELEASE_COMMAND (migration) status
-
+    
     chain_type_repo =
       %{
         arbitrum: Explorer.Repo.Arbitrum,
