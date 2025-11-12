@@ -9,9 +9,16 @@ defmodule ConfigHelper do
   def repos do
     base_repos = [Explorer.Repo, Explorer.Repo.Account]
 
-    # NOTE: Replica1 is NOT included in ecto_repos to avoid migration attempts.
-    # It's started directly in Explorer.Application supervision tree.
-    # This allows read-only replica usage without running migrations against it.
+    # Add Replica1 if DATABASE_READ_ONLY_API_URL is set AND we're not in a migration task
+    # Check if we're in a release task (migrations) by looking for specific env var
+    in_migration = System.get_env("RELEASE_COMMAND") != nil
+
+    replica_repos =
+      if System.get_env("DATABASE_READ_ONLY_API_URL") && !in_migration do
+        [Explorer.Repo.Replica1]
+      else
+        []
+      end
 
     chain_type_repo =
       %{
@@ -45,7 +52,7 @@ defmodule ConfigHelper do
       |> Enum.filter(&elem(&1, 0))
       |> Enum.map(&elem(&1, 1))
 
-    base_repos ++ chain_type_repos ++ ext_repos
+    base_repos ++ replica_repos ++ chain_type_repos ++ ext_repos
   end
 
   @doc """
