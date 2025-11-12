@@ -9,16 +9,8 @@ defmodule ConfigHelper do
   def repos do
     base_repos = [Explorer.Repo, Explorer.Repo.Account]
 
-    # Add Replica1 if DATABASE_READ_ONLY_API_URL is set AND we're not in a migration task
-    # Check if we're in a release task (migrations) by looking for specific env var
-    in_migration = System.get_env("RELEASE_COMMAND") != nil
-
-    replica_repos =
-      if System.get_env("DATABASE_READ_ONLY_API_URL") && !in_migration do
-        [Explorer.Repo.Replica1]
-      else
-        []
-      end
+    # NOTE: Replica1 is added dynamically in config/runtime.exs based on
+    # DATABASE_READ_ONLY_API_URL env var and RELEASE_COMMAND (migration) status
 
     chain_type_repo =
       %{
@@ -52,7 +44,7 @@ defmodule ConfigHelper do
       |> Enum.filter(&elem(&1, 0))
       |> Enum.map(&elem(&1, 1))
 
-    base_repos ++ replica_repos ++ chain_type_repos ++ ext_repos
+    base_repos ++ chain_type_repos ++ ext_repos
   end
 
   @doc """
