@@ -67,12 +67,12 @@ defmodule Explorer.Chain.Import.Runner.TokenTransfers do
         _ -> Enum.sort_by(changes_list, &{&1.transaction_hash, &1.block_hash, &1.log_index})
       end
 
-    # Modified for Citus + TimescaleDB distributed hypertable support
-    # Added inserted_at to enable time-based partitioning (Monad/default chains only)
+    # Modified for Citus distributed table support
+    # Using PRIMARY KEY columns for conflict resolution
     conflict_target =
       case Application.get_env(:explorer, :chain_type) do
         :celo -> [:log_index, :block_hash]  # Celo unchanged
-        _ -> [:transaction_hash, :log_index, :block_hash, :inserted_at]  # Monad: added inserted_at
+        _ -> [:transaction_hash, :block_hash, :log_index]  # Monad: matches Citus PRIMARY KEY
       end
 
     {:ok, inserted} =

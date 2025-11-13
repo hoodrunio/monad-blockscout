@@ -233,7 +233,7 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactions do
 
     # Modified for Citus distributed table support
     # Using PRIMARY KEY (transaction_hash, index) for conflict resolution
-    # This matches the Citus PRIMARY KEY and enables co-location with transactions
+    # This matches the Citus PRIMARY KEY created by migration and enables co-location with transactions
     {:ok, internal_transactions} =
       Import.insert_changes_list(
         repo,
