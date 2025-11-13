@@ -231,13 +231,14 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactions do
 
     ordered_changes_list = Enum.sort_by(valid_internal_transactions, &{&1.transaction_hash, &1.index})
 
-    # Modified for Citus + TimescaleDB distributed hypertable support
-    # Added inserted_at to enable time-based partitioning
+    # Modified for Citus distributed table support
+    # Using PRIMARY KEY (transaction_hash, index) for conflict resolution
+    # This matches the Citus PRIMARY KEY and enables co-location with transactions
     {:ok, internal_transactions} =
       Import.insert_changes_list(
         repo,
         ordered_changes_list,
-        conflict_target: [:block_hash, :block_index, :inserted_at],
+        conflict_target: [:transaction_hash, :index],
         for: InternalTransaction,
         on_conflict: on_conflict,
         returning: true,
