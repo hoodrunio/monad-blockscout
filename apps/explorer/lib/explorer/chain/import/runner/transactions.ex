@@ -107,10 +107,14 @@ defmodule Explorer.Chain.Import.Runner.Transactions do
     # Enforce Transaction ShareLocks order (see docs: sharelocks.md)
     ordered_changes_list = Enum.sort_by(changes_list, & &1.hash)
 
+    # Modified for Citus + TimescaleDB distributed hypertable support
+    # Original: conflict_target: :hash
+    # Changed to include inserted_at for distributed hypertable partitioning
+    # This allows TimescaleDB to partition by time while Citus shards by hash
     Import.insert_changes_list(
       repo,
       ordered_changes_list,
-      conflict_target: :hash,
+      conflict_target: [:hash, :inserted_at],
       on_conflict: on_conflict,
       for: Transaction,
       returning: true,

@@ -71,10 +71,12 @@ defmodule Explorer.Chain.Import.Runner.Logs do
         _ -> Enum.sort_by(changes_list, &{&1.transaction_hash, &1.block_hash, &1.index})
       end
 
+    # Modified for Citus + TimescaleDB distributed hypertable support
+    # Added inserted_at to enable time-based partitioning (Monad/default chains only)
     conflict_target =
       case Application.get_env(:explorer, :chain_type) do
-        :celo -> [:index, :block_hash]
-        _ -> [:transaction_hash, :index, :block_hash]
+        :celo -> [:index, :block_hash]  # Celo unchanged
+        _ -> [:transaction_hash, :index, :block_hash, :inserted_at]  # Monad: added inserted_at
       end
 
     {:ok, _} =
