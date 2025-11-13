@@ -1087,43 +1087,10 @@ defmodule Explorer.Chain.Import.Runner.Blocks do
 
   # `block_rewards` are linked to `blocks.hash`, but fetched by `blocks.number`, so when a block with the same number is
   # inserted, the old block rewards need to be deleted, so that the old and new rewards aren't combined.
-  defp delete_rewards(repo, blocks_changes, %{timeout: timeout}) do
-    {hashes, numbers} =
-      Enum.reduce(blocks_changes, {[], []}, fn
-        %{consensus: false, hash: hash}, {acc_hashes, acc_numbers} ->
-          {[hash | acc_hashes], acc_numbers}
-
-        %{consensus: true, number: number}, {acc_hashes, acc_numbers} ->
-          {acc_hashes, [number | acc_numbers]}
-      end)
-
-    query =
-      from(reward in Reward,
-        inner_join: block in assoc(reward, :block),
-        where: block.hash in ^hashes or block.number in ^numbers,
-        # Enforce Reward ShareLocks order (see docs: sharelocks.md)
-        order_by: [asc: :address_hash, asc: :address_type, asc: :block_hash],
-        # acquire locks for `reward`s only
-        lock: fragment("FOR UPDATE OF ?", reward)
-      )
-
-    delete_query =
-      from(r in Reward,
-        join: s in subquery(query),
-        on:
-          r.address_hash == s.address_hash and
-            r.address_type == s.address_type and
-            r.block_hash == s.block_hash
-      )
-
-    try do
-      {count, nil} = repo.delete_all(delete_query, timeout: timeout)
-
-      {:ok, count}
-    rescue
-      postgrex_error in Postgrex.Error ->
-        {:error, %{exception: postgrex_error, blocks_changes: blocks_changes}}
-    end
+  # Disabled for Monad: Block rewards are not used in Monad blockchain (only transaction fees)
+  # This also resolves Citus incompatibility with the subquery pattern used in the original implementation
+  defp delete_rewards(_repo, _blocks_changes, _options) do
+    {:ok, 0}
   end
 
   defp update_block_second_degree_relations(repo, uncle_hashes, %{
