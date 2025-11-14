@@ -268,23 +268,49 @@ defmodule Explorer.Chain.Import.Runner.Blocks do
          timestamps: %{updated_at: updated_at},
          blocks_changes: blocks_changes
        }) do
-    query =
+    # Citus compatibility: Completely rewritten to avoid subquery JOIN
+    # The previous approach used `join: s in subquery(query)` which triggers
+    # implicit row-level locking that Citus distributed tables cannot handle.
+    #
+    # New approach:
+    # 1. Query forked transaction hashes (simple SELECT, no locks)
+    # 2. Update directly with WHERE hash IN (...) (Citus-compatible)
+
+    # Step 1: Get list of forked transaction hashes
+    forked_hashes =
       from(
         transaction in where_forked(blocks_changes),
-        select: transaction,
+        select: transaction.hash,
         # Enforce Transaction ShareLocks order (see docs: sharelocks.md)
         order_by: [asc: :hash]
-        # Citus compatibility: Removed "FOR NO KEY UPDATE" lock
-        # Citus cannot execute row-level locking on distributed tables
-        # The subsequent update_all will handle the update without explicit locking
       )
+      |> repo.all(timeout: timeout)
 
+    # Step 2: Direct update without subquery or JOIN
+    # This avoids any implicit locking that Citus cannot handle
     update_query =
       from(
         t in Transaction,
-        join: s in subquery(query),
-        on: t.hash == s.hash,
-        update: [
+        where: t.hash in ^forked_hashes,
+        select: %{
+          hash: t.hash,
+          block_hash: t.block_hash,
+          block_number: t.block_number,
+          gas_used: t.gas_used,
+          cumulative_gas_used: t.cumulative_gas_used,
+          index: t.index,
+          status: t.status,
+          error: t.error,
+          max_priority_fee_per_gas: t.max_priority_fee_per_gas,
+          max_fee_per_gas: t.max_fee_per_gas,
+          type: t.type
+        }
+      )
+
+    {_num, transactions} =
+      repo.update_all(
+        update_query,
+        [
           set: [
             block_hash: nil,
             block_number: nil,
@@ -296,13 +322,11 @@ defmodule Explorer.Chain.Import.Runner.Blocks do
             max_priority_fee_per_gas: nil,
             max_fee_per_gas: nil,
             type: nil,
-            updated_at: ^updated_at
+            updated_at: updated_at
           ]
         ],
-        select: s
+        timeout: timeout
       )
-
-    {_num, transactions} = repo.update_all(update_query, [], timeout: timeout)
 
     transactions
     |> Enum.map(& &1.hash)
