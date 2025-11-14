@@ -175,13 +175,22 @@ conflict_target: [:address_hash, :address_type, :block_hash]
 -   )
 - end
 + defp default_on_conflict do
-+   # Citus compatibility: use :replace_all instead of query-based on_conflict
-+   :replace_all
++   # Citus compatibility: use atom-based on_conflict to avoid SELECT FOR UPDATE
++   # Explicitly exclude PRIMARY KEY columns (hash, index) from being updated
++   {:replace_all_except, [:hash, :index]}
 + end
 ```
 - **Critical Fix**: Query-based `on_conflict` generates `SELECT FOR UPDATE` which is incompatible with Citus distributed tables
-- Using `:replace_all` performs direct `ON CONFLICT ... DO UPDATE SET` without row locking
+- Using `{:replace_all_except, [:hash, :index]}` performs direct `ON CONFLICT ... DO UPDATE SET` without row locking
+- Explicitly excludes PRIMARY KEY columns from updates (Ecto best practice)
+- Updates `uncle_hash` and timestamps when conflicts occur
+- Matches pattern used in other Blockscout runners (migration_status.ex, transaction_stats.ex)
 - This is the root cause fix for production `could not run distributed query with FOR UPDATE/SHARE commands` errors
+
+**Why Not `:replace_all`?**
+- Ecto docs warn against `:replace_all` with primary keys
+- Would attempt to update PK columns with same values (wasteful)
+- `{:replace_all_except, [:hash, :index]}` is more explicit and semantically correct
 
 ---
 

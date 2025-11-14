@@ -84,9 +84,13 @@ defmodule Explorer.Chain.Import.Runner.Transaction.Forks do
   end
 
   defp default_on_conflict do
-    # Citus compatibility: use :replace_all instead of query-based on_conflict
+    # Citus compatibility: use atom-based on_conflict to avoid SELECT FOR UPDATE
     # Query-based on_conflict generates SELECT FOR UPDATE which is incompatible
     # with Citus distributed tables without WHERE clause on distribution column
-    :replace_all
+    #
+    # Explicitly exclude PRIMARY KEY columns (hash, index) from being updated
+    # This updates uncle_hash and timestamps when the same fork is re-inserted
+    # Follows Ecto best practices and matches pattern used in migration_status.ex
+    {:replace_all_except, [:hash, :index]}
   end
 end
