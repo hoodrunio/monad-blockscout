@@ -27,11 +27,7 @@ defmodule Explorer.Chain.Import.Runner.Tokens do
         timeout: timeout,
         timestamps: %{updated_at: updated_at}
       }) do
-    # Enable sequential mode for Citus reference table updates
-    # Prevents parallel modification errors on the replicated 'tokens' table
-    # Use Ecto.Adapters.SQL.query to ensure it runs in the same transaction as update_all
-    {:ok, _} = Ecto.Adapters.SQL.query(repo, "SET LOCAL citus.multi_shard_modify_mode TO 'sequential'", [])
-
+    # Extract hashes first for lock acquisition
     {hashes, deltas} =
       token_holder_count_deltas
       |> Enum.map(fn %{contract_address_hash: contract_address_hash, delta: delta} ->
@@ -39,6 +35,22 @@ defmodule Explorer.Chain.Import.Runner.Tokens do
         {contract_address_hash_bytes, delta}
       end)
       |> Enum.unzip()
+
+    # Acquire token-level granular advisory locks to prevent cross-pod parallel updates
+    # Each token gets its own lock ID derived from its address hash
+    # Locks are acquired in sorted order to prevent deadlocks
+    hashes
+    |> Enum.map(&:erlang.phash2(&1, 2_147_483_647))
+    |> Enum.uniq()
+    |> Enum.sort()
+    |> Enum.each(fn lock_id ->
+      {:ok, _} = Ecto.Adapters.SQL.query(repo, "SELECT pg_advisory_xact_lock(#{lock_id})", [])
+    end)
+
+    # Enable sequential mode for Citus reference table updates
+    # Prevents parallel modification errors on the replicated 'tokens' table
+    # Use Ecto.Adapters.SQL.query to ensure it runs in the same transaction as update_all
+    {:ok, _} = Ecto.Adapters.SQL.query(repo, "SET LOCAL citus.multi_shard_modify_mode TO 'sequential'", [])
 
     # Citus-compatible: Remove subquery IN and FOR NO KEY UPDATE lock
     # tokens is a reference table (replicated) - sequential mode already handles concurrency
