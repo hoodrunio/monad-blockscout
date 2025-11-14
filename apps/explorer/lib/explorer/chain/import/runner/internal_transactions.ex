@@ -309,20 +309,23 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactions do
       |> Enum.map(& &1.block_number)
       |> Enum.uniq()
 
+    # Citus-compatible: Remove FOR NO KEY UPDATE lock
+    # blocks is a reference table (replicated) - locks are unnecessary
     query =
       from(
         block in Block,
         where: block.number in ^block_numbers and block.consensus == true,
         select: block.hash,
-        # Enforce Block ShareLocks order (see docs: sharelocks.md)
-        order_by: [asc: block.hash],
-        lock: "FOR NO KEY UPDATE"
+        order_by: [asc: block.hash]
       )
 
     {:ok, repo.all(query)}
   end
 
   defp acquire_pending_internal_transactions(repo, block_hashes) do
+    # Citus-compatible: Remove FOR UPDATE locks
+    # pending_transaction_operations is distributed by transaction_hash
+    # FOR UPDATE on distributed tables causes Citus errors
     case PendingOperationsHelper.pending_operations_type() do
       "blocks" ->
         query =
@@ -330,7 +333,6 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactions do
           |> PendingOperationsHelper.block_hash_in_query()
           |> select([pbo], pbo.block_hash)
           |> order_by([pbo], asc: pbo.block_hash)
-          |> lock("FOR UPDATE")
 
         {:ok, {:block_hashes, repo.all(query)}}
 
@@ -341,9 +343,7 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactions do
             join: transaction in assoc(pending_ops, :transaction),
             where: transaction.block_hash in ^block_hashes,
             select: pending_ops.transaction_hash,
-            # Enforce PendingTransactionOperation ShareLocks order (see docs: sharelocks.md)
-            order_by: [asc: pending_ops.transaction_hash],
-            lock: "FOR UPDATE"
+            order_by: [asc: pending_ops.transaction_hash]
           )
 
         {:ok, {:transaction_hashes, repo.all(query)}}
@@ -357,14 +357,14 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactions do
         {:transaction_hashes, transaction_hashes} -> dynamic([t], t.hash in ^transaction_hashes)
       end
 
+    # Citus-compatible: Remove FOR NO KEY UPDATE lock
+    # transactions is distributed by hash - FOR NO KEY UPDATE causes Citus errors
     query =
       from(
         t in Transaction,
         where: ^dynamic_condition,
         select: map(t, [:hash, :block_hash, :block_number, :cumulative_gas_used, :status]),
-        # Enforce Transaction ShareLocks order (see docs: sharelocks.md)
-        order_by: [asc: t.hash],
-        lock: "FOR NO KEY UPDATE"
+        order_by: [asc: t.hash]
       )
 
     {:ok, repo.all(query)}

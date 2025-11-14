@@ -40,15 +40,9 @@ defmodule Explorer.Chain.Import.Runner.Tokens do
       end)
       |> Enum.unzip()
 
-    token_query =
-      from(
-        token in Token,
-        where: token.contract_address_hash in ^hashes,
-        select: token.contract_address_hash,
-        order_by: token.contract_address_hash,
-        lock: "FOR NO KEY UPDATE"
-      )
-
+    # Citus-compatible: Remove subquery IN and FOR NO KEY UPDATE lock
+    # tokens is a reference table (replicated) - sequential mode already handles concurrency
+    # Direct WHERE IN is more efficient than subquery pattern
     query =
       from(
         token in Token,
@@ -59,7 +53,7 @@ defmodule Explorer.Chain.Import.Runner.Tokens do
             ^deltas
           ),
         on: token.contract_address_hash == deltas.contract_address_hash,
-        where: token.contract_address_hash in subquery(token_query),
+        where: token.contract_address_hash in ^hashes,
         where: not is_nil(token.holder_count),
         update: [
           set: [

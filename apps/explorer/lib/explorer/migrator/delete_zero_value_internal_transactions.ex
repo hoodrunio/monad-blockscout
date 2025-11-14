@@ -86,23 +86,16 @@ defmodule Explorer.Migrator.DeleteZeroValueInternalTransactions do
 
   defp clear_internal_transactions(from_number, to_number) when from_number < to_number do
     Repo.transaction(fn ->
-      locked_internal_transactions_to_delete_query =
-        from(
-          it in InternalTransaction,
-          select: select_ctid(it),
-          where: it.block_number >= ^from_number,
-          where: it.block_number <= ^to_number,
-          where: it.type == ^:call,
-          where: it.value == ^0,
-          order_by: [asc: it.transaction_hash, asc: it.index],
-          lock: "FOR UPDATE"
-        )
-
+      # Citus-compatible: Remove ctid-based JOIN and FOR UPDATE lock
+      # ctid is SHARD-LOCAL in Citus distributed tables
+      # internal_transactions is distributed by transaction_hash
       delete_query =
         from(
           it in InternalTransaction,
-          inner_join: locked_it in subquery(locked_internal_transactions_to_delete_query),
-          on: join_on_ctid(it, locked_it)
+          where: it.block_number >= ^from_number,
+          where: it.block_number <= ^to_number,
+          where: it.type == ^:call,
+          where: it.value == ^0
         )
 
       Repo.delete_all(delete_query, timeout: :infinity)

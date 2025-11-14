@@ -666,23 +666,10 @@ defmodule Explorer.Chain.Import.Runner.Transactions do
     if Enum.empty?(block_hashes) do
       {:ok, []}
     else
-      query =
-        from(
-          block in Block,
-          where: block.hash in ^block_hashes,
-          # Enforce Block ShareLocks order (see docs: sharelocks.md)
-          order_by: [asc: block.hash],
-          lock: "FOR NO KEY UPDATE"
-        )
-
-      transactions_query =
-        from(
-          transaction in Transaction,
-          where: transaction.block_hash in ^block_hashes,
-          # Enforce Transaction ShareLocks order (see docs: sharelocks.md)
-          order_by: [asc: :hash],
-          lock: "FOR NO KEY UPDATE"
-        )
+      # Citus-compatible: Remove subquery JOINs and FOR NO KEY UPDATE locks
+      # blocks is a reference table (replicated) - locks unnecessary
+      # transactions is distributed by hash - FOR NO KEY UPDATE causes Citus errors
+      # Use direct WHERE IN instead of subquery JOIN pattern
 
       transactions_replacements = [
         block_hash: nil,
@@ -699,16 +686,18 @@ defmodule Explorer.Chain.Import.Runner.Transactions do
       ]
 
       try do
+        # Direct UPDATE on blocks without subquery
         {_, result} =
           repo.update_all(
-            from(b in Block, join: s in subquery(query), on: b.hash == s.hash, select: b.number),
+            from(b in Block, where: b.hash in ^block_hashes, select: b.number),
             [set: [refetch_needed: true, updated_at: updated_at]],
             timeout: timeout
           )
 
+        # Direct UPDATE on transactions without subquery
         {_, transaction_hashes} =
           repo.update_all(
-            from(t in Transaction, join: s in subquery(transactions_query), on: t.hash == s.hash, select: t.hash),
+            from(t in Transaction, where: t.block_hash in ^block_hashes, select: t.hash),
             [set: transactions_replacements],
             timeout: timeout
           )
