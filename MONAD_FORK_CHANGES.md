@@ -136,6 +136,33 @@ conflict_target: [:address_hash, :address_type, :block_hash]
 
 ---
 
+#### 7. Transaction Forks Conflict Target ⚠️ CRITICAL FIX
+**File**: `apps/explorer/lib/explorer/chain/import/runner/transaction/forks.ex`
+**Line**: 77
+
+**Change**:
+```diff
+- conflict_target: [:uncle_hash, :index]
++ conflict_target: [:hash, :index]
+```
+
+**Reason**:
+- `transaction_forks` table distributed by `hash` (co-located with transactions)
+- Original table had NO PRIMARY KEY (created with `primary_key: false`)
+- Original UNIQUE constraint: `(uncle_hash, index)` - incompatible with Citus
+- New PRIMARY KEY: `(hash, index)` (added by citus-migration.sql)
+- `conflict_target` must match new PRIMARY KEY
+- **Production Error Fixed**: `could not run distributed query with FOR UPDATE/SHARE commands`
+
+**Sort Order Changed**:
+```diff
+- ordered_changes_list = Enum.sort_by(changes_list, &{&1.uncle_hash, &1.index})
++ ordered_changes_list = Enum.sort_by(changes_list, &{&1.hash, &1.index})
+```
+- ShareLocks order updated to match distribution column for optimal Citus performance
+
+---
+
 ## 🗃️ Database Schema Changes
 
 ### Dropped UNIQUE Indexes (Citus Incompatible)
@@ -276,9 +303,10 @@ grep -q "conflict_target: \[:transaction_hash, :log_index\]" \
 
 ## 📊 Impact Analysis
 
-### Changed Files: 2
+### Changed Files: 3
 - `apps/explorer/lib/explorer/chain/import/runner/logs.ex`
 - `apps/explorer/lib/explorer/chain/import/runner/token_transfers.ex`
+- `apps/explorer/lib/explorer/chain/import/runner/transaction/forks.ex`
 
 ### Breaking Changes: None
 ### Performance Impact: Neutral to Positive

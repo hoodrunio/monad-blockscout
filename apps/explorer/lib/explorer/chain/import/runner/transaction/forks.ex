@@ -65,12 +65,16 @@ defmodule Explorer.Chain.Import.Runner.Transaction.Forks do
     on_conflict = Map.get_lazy(options, :on_conflict, &default_on_conflict/0)
 
     # Enforce Fork ShareLocks order (see docs: sharelocks.md)
-    ordered_changes_list = Enum.sort_by(changes_list, &{&1.uncle_hash, &1.index})
+    # Modified for Citus: sort by distribution column (hash) first
+    ordered_changes_list = Enum.sort_by(changes_list, &{&1.hash, &1.index})
 
+    # Modified for Citus distributed table support
+    # transaction_forks PRIMARY KEY: (hash, index) - matches distribution column
+    # Old PK was: UNIQUE (uncle_hash, index) - incompatible with Citus
     Import.insert_changes_list(
       repo,
       ordered_changes_list,
-      conflict_target: [:uncle_hash, :index],
+      conflict_target: [:hash, :index],
       on_conflict: on_conflict,
       for: Transaction.Fork,
       returning: [:uncle_hash, :hash],
