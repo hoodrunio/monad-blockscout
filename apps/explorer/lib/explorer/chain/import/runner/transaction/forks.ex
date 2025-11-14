@@ -84,14 +84,9 @@ defmodule Explorer.Chain.Import.Runner.Transaction.Forks do
   end
 
   defp default_on_conflict do
-    from(
-      transaction_fork in Transaction.Fork,
-      update: [
-        set: [
-          hash: fragment("EXCLUDED.hash")
-        ]
-      ],
-      where: fragment("EXCLUDED.hash <> ?", transaction_fork.hash)
-    )
+    # Citus compatibility: use :replace_all instead of query-based on_conflict
+    # Query-based on_conflict generates SELECT FOR UPDATE which is incompatible
+    # with Citus distributed tables without WHERE clause on distribution column
+    :replace_all
   end
 end

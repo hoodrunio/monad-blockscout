@@ -161,6 +161,28 @@ conflict_target: [:address_hash, :address_type, :block_hash]
 ```
 - ShareLocks order updated to match distribution column for optimal Citus performance
 
+**ON CONFLICT Strategy Changed** (Line 86):
+```diff
+- defp default_on_conflict do
+-   from(
+-     transaction_fork in Transaction.Fork,
+-     update: [
+-       set: [
+-         hash: fragment("EXCLUDED.hash")
+-       ]
+-     ],
+-     where: fragment("EXCLUDED.hash <> ?", transaction_fork.hash)
+-   )
+- end
++ defp default_on_conflict do
++   # Citus compatibility: use :replace_all instead of query-based on_conflict
++   :replace_all
++ end
+```
+- **Critical Fix**: Query-based `on_conflict` generates `SELECT FOR UPDATE` which is incompatible with Citus distributed tables
+- Using `:replace_all` performs direct `ON CONFLICT ... DO UPDATE SET` without row locking
+- This is the root cause fix for production `could not run distributed query with FOR UPDATE/SHARE commands` errors
+
 ---
 
 ## 🗃️ Database Schema Changes
