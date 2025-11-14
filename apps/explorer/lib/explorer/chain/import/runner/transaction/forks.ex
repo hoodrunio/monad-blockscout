@@ -84,13 +84,21 @@ defmodule Explorer.Chain.Import.Runner.Transaction.Forks do
   end
 
   defp default_on_conflict do
-    # Citus compatibility: use atom-based on_conflict to avoid SELECT FOR UPDATE
-    # Query-based on_conflict generates SELECT FOR UPDATE which is incompatible
-    # with Citus distributed tables without WHERE clause on distribution column
+    # Citus compatibility: Use ON CONFLICT DO NOTHING to avoid row locking.
     #
-    # Explicitly exclude PRIMARY KEY columns (hash, index) from being updated
-    # This updates uncle_hash and timestamps when the same fork is re-inserted
-    # Follows Ecto best practices and matches pattern used in migration_status.ex
-    {:replace_all_except, [:hash, :index]}
+    # PostgreSQL's ON CONFLICT DO UPDATE internally calls heap_lock_tuple()
+    # for row-level locking, regardless of whether using atom-based strategies
+    # like {:replace_all_except, [...]} or query-based strategies.
+    #
+    # Citus distributed tables cannot execute row-level locking (FOR UPDATE/SHARE)
+    # without an equality filter on the distribution column, causing errors:
+    #   "could not run distributed query with FOR UPDATE/SHARE commands"
+    #
+    # Transaction forks represent immutable historical data:
+    #   "Transaction X was at position Y in uncle block Z"
+    # This relationship never changes once recorded, so duplicate inserts
+    # can be safely ignored without data loss. Using :nothing avoids all
+    # row locking and is the only Citus-compatible strategy for DO UPDATE scenarios.
+    :nothing
   end
 end

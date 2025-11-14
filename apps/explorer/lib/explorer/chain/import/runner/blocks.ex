@@ -330,19 +330,21 @@ defmodule Explorer.Chain.Import.Runner.Blocks do
         }
       end)
       # Enforce Fork ShareLocks order (see docs: sharelocks.md)
-      |> Enum.sort_by(&{&1.uncle_hash, &1.index})
+      # Modified for Citus: sort by distribution column (hash) first
+      |> Enum.sort_by(&{&1.hash, &1.index})
 
     {_total, forked_transaction} =
       repo.insert_all(
         Transaction.Fork,
         transaction_forks,
-        conflict_target: [:uncle_hash, :index],
-        on_conflict:
-          from(
-            transaction_fork in Transaction.Fork,
-            update: [set: [hash: fragment("EXCLUDED.hash")]],
-            where: fragment("EXCLUDED.hash <> ?", transaction_fork.hash)
-          ),
+        # Citus compatibility: Use PRIMARY KEY (hash, index) as conflict target
+        # This matches the distribution column and ensures single-shard routing
+        conflict_target: [:hash, :index],
+        # Citus compatibility: Use :nothing to avoid row locking
+        # PostgreSQL's ON CONFLICT DO UPDATE calls heap_lock_tuple() internally,
+        # which Citus cannot execute on distributed tables.
+        # Transaction forks are immutable - duplicates can be safely ignored.
+        on_conflict: :nothing,
         returning: [:hash],
         timeout: timeout
       )

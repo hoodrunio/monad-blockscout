@@ -175,22 +175,61 @@ conflict_target: [:address_hash, :address_type, :block_hash]
 -   )
 - end
 + defp default_on_conflict do
-+   # Citus compatibility: use atom-based on_conflict to avoid SELECT FOR UPDATE
-+   # Explicitly exclude PRIMARY KEY columns (hash, index) from being updated
-+   {:replace_all_except, [:hash, :index]}
++   # Citus compatibility: Use ON CONFLICT DO NOTHING to avoid row locking
++   # PostgreSQL's ON CONFLICT DO UPDATE calls heap_lock_tuple() internally
++   # Transaction forks are immutable - duplicates can be safely ignored
++   :nothing
 + end
 ```
-- **Critical Fix**: Query-based `on_conflict` generates `SELECT FOR UPDATE` which is incompatible with Citus distributed tables
-- Using `{:replace_all_except, [:hash, :index]}` performs direct `ON CONFLICT ... DO UPDATE SET` without row locking
-- Explicitly excludes PRIMARY KEY columns from updates (Ecto best practice)
-- Updates `uncle_hash` and timestamps when conflicts occur
-- Matches pattern used in other Blockscout runners (migration_status.ex, transaction_stats.ex)
+- **Critical Fix**: PostgreSQL's `ON CONFLICT DO UPDATE` **always** uses internal row locking (`heap_lock_tuple()`), regardless of strategy
+- **ANY** update strategy (`:replace_all`, `{:replace_all_except, [...]}`, query-based) triggers row locking
+- Citus cannot execute row-level locking on distributed tables without equality filter on distribution column
+- Using `:nothing` completely avoids row locking - only Citus-compatible strategy
+- **Semantically Correct**: Transaction forks are immutable historical data ("TX X was at position Y in uncle block Z")
+- Duplicate inserts represent the same immutable relationship - safe to ignore
 - This is the root cause fix for production `could not run distributed query with FOR UPDATE/SHARE commands` errors
 
-**Why Not `:replace_all`?**
-- Ecto docs warn against `:replace_all` with primary keys
-- Would attempt to update PK columns with same values (wasteful)
-- `{:replace_all_except, [:hash, :index]}` is more explicit and semantically correct
+**Why Not `{:replace_all_except, [...]}`?**
+- Still generates `ON CONFLICT DO UPDATE SET ...`
+- PostgreSQL still calls `heap_lock_tuple()` for DO UPDATE
+- Citus still rejects it with FOR UPDATE/SHARE error
+- Only `DO NOTHING` avoids row locking entirely
+
+---
+
+#### 8. Blocks Runner - derive_transaction_forks ⚠️ CRITICAL FIX
+**File**: `apps/explorer/lib/explorer/chain/import/runner/blocks.ex`
+**Lines**: 333, 339-347
+
+**Sort Order Changed** (Line 333):
+```diff
+- |> Enum.sort_by(&{&1.uncle_hash, &1.index})
++ |> Enum.sort_by(&{&1.hash, &1.index})
+```
+
+**Conflict Target Fixed** (Line 339):
+```diff
+- conflict_target: [:uncle_hash, :index],
++ conflict_target: [:hash, :index],
+```
+
+**ON CONFLICT Strategy Changed** (Lines 340-346):
+```diff
+- on_conflict:
+-   from(
+-     transaction_fork in Transaction.Fork,
+-     update: [set: [hash: fragment("EXCLUDED.hash")]],
+-     where: fragment("EXCLUDED.hash <> ?", transaction_fork.hash)
+-   ),
++ on_conflict: :nothing,
+```
+
+**Reason**:
+- This was the **PRIMARY SOURCE** of production FOR UPDATE/SHARE errors
+- Original code used wrong conflict_target `[:uncle_hash, :index]` (not the PRIMARY KEY)
+- Original code used query-based on_conflict (generates row locking)
+- Both issues fixed: correct PK `[:hash, :index]` + `:nothing` strategy
+- This function is called during block imports when transactions move from uncle blocks
 
 ---
 
