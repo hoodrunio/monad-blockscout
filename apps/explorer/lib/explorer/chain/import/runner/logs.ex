@@ -73,10 +73,11 @@ defmodule Explorer.Chain.Import.Runner.Logs do
 
     # Modified for Citus distributed table support
     # Using PRIMARY KEY columns for conflict resolution
+    # logs table PK: (transaction_hash, index) - migration 20181024164623
     conflict_target =
       case Application.get_env(:explorer, :chain_type) do
         :celo -> [:index, :block_hash]  # Celo unchanged
-        _ -> [:transaction_hash, :block_hash, :index]  # Monad: matches Citus PRIMARY KEY
+        _ -> [:transaction_hash, :index]  # Monad: matches Citus PRIMARY KEY (transaction_hash, index)
       end
 
     {:ok, _} =

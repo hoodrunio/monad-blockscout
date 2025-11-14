@@ -69,10 +69,11 @@ defmodule Explorer.Chain.Import.Runner.TokenTransfers do
 
     # Modified for Citus distributed table support
     # Using PRIMARY KEY columns for conflict resolution
+    # token_transfers table PK: (transaction_hash, log_index) - migration 20181024172010
     conflict_target =
       case Application.get_env(:explorer, :chain_type) do
         :celo -> [:log_index, :block_hash]  # Celo unchanged
-        _ -> [:transaction_hash, :block_hash, :log_index]  # Monad: matches Citus PRIMARY KEY
+        _ -> [:transaction_hash, :log_index]  # Monad: matches Citus PRIMARY KEY (transaction_hash, log_index)
       end
 
     {:ok, inserted} =
