@@ -264,18 +264,16 @@ defmodule Explorer.Chain.Import.Runner.Addresses do
     if Enum.empty?(ordered_created_contract_hashes) do
       {:ok, []}
     else
-      query =
-        from(t in Transaction,
-          where: t.created_contract_address_hash in ^ordered_created_contract_hashes,
-          # Enforce Transaction ShareLocks order (see docs: sharelocks.md)
-          order_by: t.hash,
-          lock: "FOR NO KEY UPDATE"
-        )
-
+      # Citus-compatible: Remove subquery JOIN and FOR NO KEY UPDATE lock
+      # transactions is distributed by hash - FOR NO KEY UPDATE causes 0A000 errors
+      # Direct WHERE IN is more efficient than subquery pattern
       try do
         {_, result} =
           repo.update_all(
-            from(t in Transaction, join: s in subquery(query), on: t.hash == s.hash),
+            from(t in Transaction,
+              where: t.created_contract_address_hash in ^ordered_created_contract_hashes,
+              order_by: t.hash
+            ),
             [set: [created_contract_code_indexed_at: timestamps.updated_at]],
             timeout: timeout
           )
