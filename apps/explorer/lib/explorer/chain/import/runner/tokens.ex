@@ -29,7 +29,8 @@ defmodule Explorer.Chain.Import.Runner.Tokens do
       }) do
     # Enable sequential mode for Citus reference table updates
     # Prevents parallel modification errors on the replicated 'tokens' table
-    repo.query!("SET LOCAL citus.multi_shard_modify_mode TO 'sequential'")
+    # Use Ecto.Adapters.SQL.query to ensure it runs in the same transaction as update_all
+    {:ok, _} = Ecto.Adapters.SQL.query(repo, "SET LOCAL citus.multi_shard_modify_mode TO 'sequential'", [])
 
     {hashes, deltas} =
       token_holder_count_deltas
