@@ -267,12 +267,12 @@ defmodule Explorer.Chain.Import.Runner.Addresses do
       # Citus-compatible: Remove subquery JOIN and FOR NO KEY UPDATE lock
       # transactions is distributed by hash - FOR NO KEY UPDATE causes 0A000 errors
       # Direct WHERE IN is more efficient than subquery pattern
+      # Note: order_by is NOT supported in update_all, removed from query
       try do
         {_, result} =
           repo.update_all(
             from(t in Transaction,
-              where: t.created_contract_address_hash in ^ordered_created_contract_hashes,
-              order_by: t.hash
+              where: t.created_contract_address_hash in ^ordered_created_contract_hashes
             ),
             [set: [created_contract_code_indexed_at: timestamps.updated_at]],
             timeout: timeout
