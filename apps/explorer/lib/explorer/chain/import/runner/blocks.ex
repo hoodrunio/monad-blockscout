@@ -288,26 +288,14 @@ defmodule Explorer.Chain.Import.Runner.Blocks do
 
     # Step 2: Direct update without subquery or JOIN
     # This avoids any implicit locking that Citus cannot handle
+    # IMPORTANT: Do NOT use select in update_all - it can trigger implicit locking
     update_query =
       from(
         t in Transaction,
-        where: t.hash in ^forked_hashes,
-        select: %{
-          hash: t.hash,
-          block_hash: t.block_hash,
-          block_number: t.block_number,
-          gas_used: t.gas_used,
-          cumulative_gas_used: t.cumulative_gas_used,
-          index: t.index,
-          status: t.status,
-          error: t.error,
-          max_priority_fee_per_gas: t.max_priority_fee_per_gas,
-          max_fee_per_gas: t.max_fee_per_gas,
-          type: t.type
-        }
+        where: t.hash in ^forked_hashes
       )
 
-    {_num, transactions} =
+    {_num, _result} =
       repo.update_all(
         update_query,
         [
@@ -327,6 +315,15 @@ defmodule Explorer.Chain.Import.Runner.Blocks do
         ],
         timeout: timeout
       )
+
+    # Step 3: Fetch updated transactions separately (no locks involved)
+    transactions =
+      from(
+        t in Transaction,
+        where: t.hash in ^forked_hashes,
+        select: %{hash: t.hash}
+      )
+      |> repo.all(timeout: timeout)
 
     transactions
     |> Enum.map(& &1.hash)
