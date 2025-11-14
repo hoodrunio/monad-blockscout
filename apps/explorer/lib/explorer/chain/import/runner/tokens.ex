@@ -27,6 +27,10 @@ defmodule Explorer.Chain.Import.Runner.Tokens do
         timeout: timeout,
         timestamps: %{updated_at: updated_at}
       }) do
+    # Enable sequential mode for Citus reference table updates
+    # Prevents parallel modification errors on the replicated 'tokens' table
+    repo.query!("SET LOCAL citus.multi_shard_modify_mode TO 'sequential'")
+
     {hashes, deltas} =
       token_holder_count_deltas
       |> Enum.map(fn %{contract_address_hash: contract_address_hash, delta: delta} ->
