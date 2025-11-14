@@ -273,8 +273,10 @@ defmodule Explorer.Chain.Import.Runner.Blocks do
         transaction in where_forked(blocks_changes),
         select: transaction,
         # Enforce Transaction ShareLocks order (see docs: sharelocks.md)
-        order_by: [asc: :hash],
-        lock: "FOR NO KEY UPDATE"
+        order_by: [asc: :hash]
+        # Citus compatibility: Removed "FOR NO KEY UPDATE" lock
+        # Citus cannot execute row-level locking on distributed tables
+        # The subsequent update_all will handle the update without explicit locking
       )
 
     update_query =

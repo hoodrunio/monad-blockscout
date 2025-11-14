@@ -197,7 +197,31 @@ conflict_target: [:address_hash, :address_type, :block_hash]
 
 ---
 
-#### 8. Blocks Runner - derive_transaction_forks ⚠️ CRITICAL FIX
+#### 8. Blocks Runner - fork_transactions ⚠️ CRITICAL FIX #1
+**File**: `apps/explorer/lib/explorer/chain/import/runner/blocks.ex`
+**Line**: 277
+
+**Lock Removed**:
+```diff
+  query =
+    from(
+      transaction in where_forked(blocks_changes),
+      select: transaction,
+      order_by: [asc: :hash],
+-     lock: "FOR NO KEY UPDATE"
++     # Citus compatibility: Removed "FOR NO KEY UPDATE" lock
+    )
+```
+
+**Reason**:
+- This was the **ACTUAL SOURCE** of production FOR UPDATE/SHARE errors
+- `fork_transactions` function updates existing transactions when blocks are reorganized
+- Explicit `FOR NO KEY UPDATE` lock causes Citus error
+- The subsequent `update_all` handles the update without needing explicit locking
+
+---
+
+#### 9. Blocks Runner - derive_transaction_forks ⚠️ CRITICAL FIX #2
 **File**: `apps/explorer/lib/explorer/chain/import/runner/blocks.ex`
 **Lines**: 333, 339-347
 
