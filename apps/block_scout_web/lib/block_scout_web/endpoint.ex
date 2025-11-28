@@ -80,7 +80,9 @@ defmodule BlockScoutWeb.Endpoint do
 
     # 'x-apollo-tracing' header for https://www.graphqlbin.com to work with our GraphQL endpoint
     # 'updated-gas-oracle' header for /api/v2/stats endpoint, added to support cross-origin requests (e.g. multichain search explorer)
+    # CORS origin can be configured via API_V2_CORS_ALLOWED_ORIGIN env var
     plug(CORSPlug,
+      origin: {__MODULE__, :cors_allowed_origin},
       headers:
         [
           "x-apollo-tracing",
@@ -103,6 +105,26 @@ defmodule BlockScoutWeb.Endpoint do
       {:ok,
        config
        |> Keyword.put(:http, Keyword.put_new(Keyword.get(config, :http), :dispatch, dispatch()))}
+    end
+  end
+
+  @doc """
+  Returns the allowed CORS origin from API_V2_CORS_ALLOWED_ORIGIN env var.
+  Called dynamically for each request by CORSPlug.
+  Supports single origin, multiple origins (comma-separated), or "*" for all.
+  """
+  def cors_allowed_origin do
+    case System.get_env("API_V2_CORS_ALLOWED_ORIGIN") do
+      nil -> "*"
+      "" -> "*"
+      origins ->
+        origins
+        |> String.split(",")
+        |> Enum.map(&String.trim/1)
+        |> case do
+          [single] -> single
+          multiple -> multiple
+        end
     end
   end
 
