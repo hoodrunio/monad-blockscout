@@ -164,6 +164,10 @@ defmodule Explorer.Chain.Import.Runner.Tokens do
       # Enforce Token ShareLocks order (see docs: sharelocks.md)
       |> Enum.sort_by(& &1.contract_address_hash)
 
+    # Enable sequential mode for Citus reference table inserts
+    # Prevents parallel modification errors on the replicated 'tokens' table
+    {:ok, _} = Ecto.Adapters.SQL.query(repo, "SET LOCAL citus.multi_shard_modify_mode TO 'sequential'", [])
+
     {:ok, _} =
       Import.insert_changes_list(
         repo,
