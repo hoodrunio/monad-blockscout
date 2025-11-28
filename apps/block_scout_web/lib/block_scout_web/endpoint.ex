@@ -109,22 +109,24 @@ defmodule BlockScoutWeb.Endpoint do
   end
 
   @doc """
-  Returns the allowed CORS origin from API_V2_CORS_ALLOWED_ORIGIN env var.
+  Checks if the request origin is allowed based on API_V2_CORS_ALLOWED_ORIGIN env var.
   Called dynamically for each request by CORSPlug.
   Supports single origin, multiple origins (comma-separated), or "*" for all.
   """
-  def cors_allowed_origin do
-    case System.get_env("API_V2_CORS_ALLOWED_ORIGIN") do
-      nil -> "*"
-      "" -> "*"
+  def cors_allowed_origin(_conn, origin) do
+    allowed = System.get_env("API_V2_CORS_ALLOWED_ORIGIN")
+
+    case allowed do
+      nil -> true
+      "" -> true
+      "*" -> true
       origins ->
-        origins
-        |> String.split(",")
-        |> Enum.map(&String.trim/1)
-        |> case do
-          [single] -> single
-          multiple -> multiple
-        end
+        allowed_list =
+          origins
+          |> String.split(",")
+          |> Enum.map(&String.trim/1)
+
+        origin in allowed_list
     end
   end
 
