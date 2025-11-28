@@ -68,6 +68,10 @@ defmodule Explorer.Chain.Import.Runner.TokenInstances do
     # Guarantee the same import order to avoid deadlocks
     ordered_changes_list = Enum.sort_by(changes_list, &{&1.token_contract_address_hash, &1.token_id})
 
+    # Enable sequential mode for Citus reference table inserts
+    # Prevents parallel modification errors on the replicated 'token_instances' table
+    {:ok, _} = Ecto.Adapters.SQL.query(repo, "SET LOCAL citus.multi_shard_modify_mode TO 'sequential'", [])
+
     {:ok, _} =
       Import.insert_changes_list(
         repo,
