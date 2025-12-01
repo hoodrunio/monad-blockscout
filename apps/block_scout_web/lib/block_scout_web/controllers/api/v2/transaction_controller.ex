@@ -55,6 +55,7 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
   alias Explorer.Chain.ZkSync.Reader, as: ZkSyncReader
   alias Indexer.Fetcher.OnDemand.FirstTrace, as: FirstTraceOnDemand
   alias Indexer.Fetcher.OnDemand.NeonSolanaTransactions, as: NeonSolanaTransactions
+  alias Indexer.Fetcher.OnDemand.Transaction, as: TransactionOnDemand
 
   action_fallback(BlockScoutWeb.API.V2.FallbackController)
 
@@ -174,7 +175,7 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
       [necessity_by_association: necessity_by_association]
       |> Keyword.merge(@api_true)
 
-    with {:ok, transaction, _transaction_hash} <- validate_transaction(transaction_hash_string, params, options),
+    with {:ok, transaction, _transaction_hash} <- validate_transaction(transaction_hash_string, params, options, conn),
          preloaded <-
            Chain.preload_token_transfers(
              transaction,
@@ -782,13 +783,41 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
           | {:not_found, {:error, :not_found}}
           | {:restricted_access, true}
           | {:ok, Transaction.t(), Hash.t()}
-  def validate_transaction(transaction_hash_string, params, options \\ @api_true) do
+  def validate_transaction(transaction_hash_string, params, options \\ @api_true, conn \\ nil) do
     with {:format, {:ok, transaction_hash}} <- {:format, Chain.string_to_full_hash(transaction_hash_string)},
          {:not_found, {:ok, transaction}} <-
-           {:not_found, Chain.hash_to_transaction(transaction_hash, options)},
+           {:not_found, fetch_or_demand_transaction(transaction_hash, options, conn)},
          {:ok, false} <- AccessHelper.restricted_access?(to_string(transaction.from_address_hash), params),
          {:ok, false} <- AccessHelper.restricted_access?(to_string(transaction.to_address_hash), params) do
       {:ok, transaction, transaction_hash}
+    end
+  end
+
+  defp fetch_or_demand_transaction(transaction_hash, options, conn) do
+    case Chain.hash_to_transaction(transaction_hash, options) do
+      {:ok, _transaction} = result ->
+        result
+
+      {:error, :not_found} ->
+        try_on_demand_transaction_fetch(transaction_hash, options, conn)
+    end
+  end
+
+  defp try_on_demand_transaction_fetch(_transaction_hash, _options, nil), do: {:error, :not_found}
+
+  defp try_on_demand_transaction_fetch(transaction_hash, options, conn) do
+    ip = AccessHelper.conn_to_ip_string(conn)
+
+    case TransactionOnDemand.fetch_by_hash(ip, transaction_hash) do
+      {:ok, _transaction} ->
+        # Re-fetch with full associations
+        Chain.hash_to_transaction(transaction_hash, options)
+
+      {:error, :rate_limited} ->
+        {:error, :rate_limited}
+
+      {:error, _} ->
+        {:error, :not_found}
     end
   end
 end

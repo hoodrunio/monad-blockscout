@@ -888,6 +888,13 @@ config :explorer, Explorer.Utility.RateLimiter,
     max_ban_interval: ConfigHelper.parse_time_env_var("RATE_LIMITER_ON_DEMAND_MAX_BAN_INTERVAL", "1h"),
     limitation_period: ConfigHelper.parse_time_env_var("RATE_LIMITER_ON_DEMAND_LIMITATION_PERIOD", "1h")
   ],
+  on_demand_block_fetch: [
+    time_interval_limit: ConfigHelper.parse_time_env_var("RATE_LIMITER_ON_DEMAND_BLOCK_FETCH_TIME_INTERVAL", "1m"),
+    limit_by_ip: ConfigHelper.parse_integer_env_var("RATE_LIMITER_ON_DEMAND_BLOCK_FETCH_LIMIT_BY_IP", 20),
+    exp_timeout_coeff: ConfigHelper.parse_integer_env_var("RATE_LIMITER_ON_DEMAND_BLOCK_FETCH_EXP_TIMEOUT_COEFF", 100),
+    max_ban_interval: ConfigHelper.parse_time_env_var("RATE_LIMITER_ON_DEMAND_BLOCK_FETCH_MAX_BAN_INTERVAL", "1h"),
+    limitation_period: ConfigHelper.parse_time_env_var("RATE_LIMITER_ON_DEMAND_BLOCK_FETCH_LIMITATION_PERIOD", "1h")
+  ],
   hammer_backend_module:
     if(rate_limiter_redis_url, do: Explorer.Utility.Hammer.Redis, else: Explorer.Utility.Hammer.ETS)
 
@@ -1014,6 +1021,20 @@ config :indexer, Indexer.Fetcher.OnDemand.CoinBalance,
 
 config :indexer, Indexer.Fetcher.OnDemand.ContractCode,
   threshold: ConfigHelper.parse_time_env_var("CONTRACT_CODE_ON_DEMAND_FETCHER_THRESHOLD", "5s")
+
+config :indexer, Indexer.Fetcher.OnDemand.Block,
+  timeout: ConfigHelper.parse_time_env_var("ON_DEMAND_BLOCK_FETCH_TIMEOUT", "30s"),
+  archive_json_rpc_url: System.get_env("ON_DEMAND_ARCHIVE_JSON_RPC_URL"),
+  archive_fallback_json_rpc_url: System.get_env("ON_DEMAND_ARCHIVE_FALLBACK_JSON_RPC_URL")
+
+config :indexer, Indexer.Fetcher.OnDemand.Block.Supervisor,
+  disabled?: ConfigHelper.parse_bool_env_var("ON_DEMAND_BLOCK_FETCH_DISABLED")
+
+config :indexer, Indexer.Fetcher.OnDemand.Transaction,
+  timeout: ConfigHelper.parse_time_env_var("ON_DEMAND_TX_FETCH_TIMEOUT", "45s")
+
+config :indexer, Indexer.Fetcher.OnDemand.Transaction.Supervisor,
+  disabled?: ConfigHelper.parse_bool_env_var("ON_DEMAND_TX_FETCH_DISABLED")
 
 config :indexer, Indexer.Fetcher.OnDemand.TokenInstanceMetadataRefetch,
   threshold: ConfigHelper.parse_time_env_var("TOKEN_INSTANCE_METADATA_REFETCH_ON_DEMAND_FETCHER_THRESHOLD", "5s")

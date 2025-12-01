@@ -127,6 +127,17 @@ defmodule BlockScoutWeb.API.V2.FallbackController do
     |> call({:not_found, nil})
   end
 
+  def call(conn, {:error, :rate_limited}) do
+    Logger.warning(fn ->
+      ["On-demand fetch rate limited"]
+    end)
+
+    conn
+    |> put_status(:too_many_requests)
+    |> put_view(ApiView)
+    |> render(:message, %{message: "Too many on-demand fetch requests. Please try again later."})
+  end
+
   def call(conn, {:error, %Changeset{} = changeset}) do
     conn
     |> put_status(:unprocessable_entity)
