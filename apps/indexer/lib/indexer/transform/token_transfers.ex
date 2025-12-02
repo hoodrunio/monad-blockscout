@@ -298,6 +298,52 @@ defmodule Indexer.Transform.TokenTransfers do
     {token, token_transfer}
   end
 
+  # Deposit/Withdrawal with non-indexed address (address and amount in data field)
+  # Some token implementations use Deposit(address dst, uint256 wad) without indexed
+  defp parse_params(
+         %{
+           first_topic: first_topic,
+           second_topic: nil,
+           third_topic: nil,
+           fourth_topic: nil,
+           data: data
+         } = log
+       )
+       when first_topic in [
+              unquote(TokenTransfer.weth_deposit_signature()),
+              unquote(TokenTransfer.weth_withdrawal_signature())
+            ] and not is_nil(data) and byte_size(data) == 130 do
+    # data contains: address (32 bytes padded) + uint256 (32 bytes) = 64 bytes = 128 hex + "0x" = 130
+    [address_hash, amount] = decode_data(data, [:address, {:uint, 256}])
+
+    {from_address_hash, to_address_hash} =
+      if first_topic == TokenTransfer.weth_deposit_signature() do
+        {burn_address_hash_string(), "0x" <> Base.encode16(address_hash, case: :lower)}
+      else
+        {"0x" <> Base.encode16(address_hash, case: :lower), burn_address_hash_string()}
+      end
+
+    token_transfer = %{
+      amount: Decimal.new(amount || 0),
+      block_number: log.block_number,
+      block_hash: log.block_hash,
+      log_index: log.index,
+      from_address_hash: from_address_hash,
+      to_address_hash: to_address_hash,
+      token_contract_address_hash: log.address_hash,
+      transaction_hash: log.transaction_hash,
+      token_ids: nil,
+      token_type: "ERC-20"
+    }
+
+    token = %{
+      contract_address_hash: log.address_hash,
+      type: "ERC-20"
+    }
+
+    {token, token_transfer}
+  end
+
   # ERC-721 token transfer with info in data field instead of in log topics
   defp parse_params(
          %{
