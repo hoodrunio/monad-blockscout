@@ -70,6 +70,10 @@ defmodule Explorer.Chain.Import.Stage.ChainTypeSpecific do
     ],
     stability: [
       Runner.Stability.Validators
+    ],
+    monad: [
+      Runner.Monad.StakingEvents,
+      Runner.Monad.Validators
     ]
   }
 

@@ -30,6 +30,7 @@ defmodule Indexer.Supervisor do
   alias Indexer.Fetcher.MultichainSearchDb.MainExportQueue, as: MultichainSearchDbMainExportQueue
   alias Indexer.Fetcher.MultichainSearchDb.TokenInfoExportQueue, as: MultichainSearchDbTokenInfoExportQueue
   alias Indexer.Fetcher.Stability.Validator, as: ValidatorStability
+  alias Indexer.Fetcher.Monad.Supervisor, as: MonadSupervisor
   alias Indexer.Fetcher.TokenInstance.Realtime, as: TokenInstanceRealtime
   alias Indexer.Fetcher.TokenInstance.Retry, as: TokenInstanceRetry
   alias Indexer.Fetcher.TokenInstance.Sanitize, as: TokenInstanceSanitize
@@ -355,12 +356,17 @@ defmodule Indexer.Supervisor do
   end
 
   defp add_chain_type_dependent_fetchers(fetchers) do
+    json_rpc_named_arguments = Application.fetch_env!(:indexer, :json_rpc_named_arguments)
+
     case Application.get_env(:explorer, :chain_type) do
       :stability ->
         [{ValidatorStability, []} | fetchers]
 
       :blackfort ->
         [{ValidatorBlackfort, []} | fetchers]
+
+      :monad ->
+        fetchers ++ configure(MonadSupervisor, [[json_rpc_named_arguments: json_rpc_named_arguments]])
 
       _ ->
         fetchers

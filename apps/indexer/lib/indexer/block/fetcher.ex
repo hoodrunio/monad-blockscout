@@ -58,6 +58,8 @@ defmodule Indexer.Block.Fetcher do
 
   alias Indexer.Transform.Stability.Validators, as: StabilityValidators
 
+  alias Indexer.Transform.Monad.StakingEvents, as: MonadStakingEvents
+
   alias Indexer.Transform.Optimism.Withdrawals, as: OptimismWithdrawals
 
   alias Indexer.Transform.Scroll.L1FeeParams, as: ScrollL1FeeParams
@@ -235,6 +237,7 @@ defmodule Indexer.Block.Fetcher do
            Enum.map(transaction_actions, fn action -> Map.put(action, :data, Map.delete(action.data, :block_number)) end),
          token_instances = TokenInstances.params_set(%{token_transfers_params: token_transfers}),
          stability_validators = StabilityValidators.parse(blocks),
+         monad_staking_events = MonadStakingEvents.parse(logs),
          addresses_without_nonce = process_addresses_nonce(addresses),
          basic_import_options = %{
            addresses: %{params: addresses_without_nonce},
@@ -265,7 +268,8 @@ defmodule Indexer.Block.Fetcher do
              celo_epochs: celo_l1_epochs ++ celo_l2_epochs,
              celo_pending_account_operations: celo_pending_account_operations,
              arbitrum_messages: arbitrum_xlevel_messages,
-             stability_validators: stability_validators
+             stability_validators: stability_validators,
+             monad_staking_events: monad_staking_events
            }
            |> extend_with_zilliqa_import_options(fetched_blocks),
          {:ok, inserted} <-
@@ -369,6 +373,11 @@ defmodule Indexer.Block.Fetcher do
   defp do_import_options(:stability, basic_import_options, %{stability_validators: stability_validators}) do
     basic_import_options
     |> Map.put_new(:stability_validators, %{params: stability_validators})
+  end
+
+  defp do_import_options(:monad, basic_import_options, %{monad_staking_events: monad_staking_events}) do
+    basic_import_options
+    |> Map.put_new(:monad_staking_events, %{params: monad_staking_events})
   end
 
   defp do_import_options(_chain_type, basic_import_options, _chain_specific_import_options) do

@@ -256,6 +256,11 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
         get("/:address_hash_param/celo/election-rewards/csv", V2.CsvExportController, :celo_election_rewards_csv)
       end
 
+      if @chain_type == :monad do
+        get("/:address_hash_param/monad/staking-events", V2.MonadController, :staking_events)
+        get("/:address_hash_param/monad/staking-stats", V2.MonadController, :staking_stats)
+      end
+
       if @chain_type == :ethereum do
         get("/:address_hash_param/beacon/deposits", V2.AddressController, :beacon_deposits)
       end
@@ -327,6 +332,17 @@ defmodule BlockScoutWeb.Routers.ApiRouter do
         get("/", V2.CeloController, :epochs)
         get("/:number", V2.CeloController, :epoch)
         get("/:number/election-rewards/:type", V2.CeloController, :election_rewards)
+      end
+    end
+
+    if @chain_type == :monad do
+      scope "/monad" do
+        scope "/validators" do
+          get("/", V2.MonadController, :validators)
+          get("/stats", V2.MonadController, :validators_stats)
+          get("/:validator_id", V2.MonadController, :validator)
+          get("/:validator_id/staking-events", V2.MonadController, :validator_staking_events)
+        end
       end
     end
 
