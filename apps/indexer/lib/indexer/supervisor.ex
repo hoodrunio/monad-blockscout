@@ -366,7 +366,7 @@ defmodule Indexer.Supervisor do
         [{ValidatorBlackfort, []} | fetchers]
 
       :monad ->
-        fetchers ++ configure(MonadSupervisor, [[json_rpc_named_arguments: json_rpc_named_arguments]])
+        fetchers ++ configure(MonadSupervisor, [json_rpc_named_arguments: json_rpc_named_arguments])
 
       _ ->
         fetchers
