@@ -17,6 +17,7 @@ defmodule Indexer.Fetcher.OnDemand.Block do
   alias Explorer.Chain
   alias Explorer.Chain.Hash
   alias Explorer.Utility.RateLimiter
+  alias Indexer.Block.Fetcher, as: BlockFetcher
   alias Indexer.Block.Fetcher.Receipts
   alias Indexer.Transform.{Addresses, TokenTransfers}
   alias Indexer.Transform.Blocks, as: TransformBlocks
@@ -237,31 +238,20 @@ defmodule Indexer.Fetcher.OnDemand.Block do
     end
   end
 
-  @receipt_batch_size 25
-
-  defp fetch_receipts([], _json_rpc_args), do: {:ok, %{logs: [], receipts: []}}
+  # Use smaller batch size for on-demand fetching to avoid RPC "Batch size too large" errors
+  @receipts_batch_size 25
+  @receipts_concurrency 4
 
   defp fetch_receipts(transactions_params, json_rpc_args) do
-    # Batch receipts to avoid "Batch size too large" errors from RPC
-    transactions_params
-    |> Enum.chunk_every(@receipt_batch_size)
-    |> fetch_receipts_in_batches(json_rpc_args, %{logs: [], receipts: []})
-  end
+    # Create a Block.Fetcher struct with custom batch size for on-demand fetching
+    fetcher = %BlockFetcher{
+      json_rpc_named_arguments: json_rpc_args,
+      receipts_batch_size: @receipts_batch_size,
+      receipts_concurrency: @receipts_concurrency
+    }
 
-  defp fetch_receipts_in_batches([], _json_rpc_args, acc), do: {:ok, acc}
-
-  defp fetch_receipts_in_batches([batch | rest], json_rpc_args, acc) do
-    case EthereumJSONRPC.fetch_transaction_receipts(batch, json_rpc_args) do
-      {:ok, %{logs: logs, receipts: receipts}} ->
-        new_acc = %{
-          logs: acc.logs ++ logs,
-          receipts: acc.receipts ++ receipts
-        }
-        fetch_receipts_in_batches(rest, json_rpc_args, new_acc)
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+    # Use the same receipt fetching logic as the main indexer
+    Receipts.fetch(fetcher, transactions_params)
   end
 
   # Parse comma-separated archive URLs from config
