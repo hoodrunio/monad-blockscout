@@ -166,7 +166,7 @@ defmodule Explorer.Chain.Monad.Validator do
     necessity_by_association = Keyword.get(options, :necessity_by_association, %{})
 
     __MODULE__
-    |> where([v], not is_nil(v.consensus_stake) and v.consensus_stake > 0)
+    |> where([v], not is_nil(v.consensus_stake) and fragment("? > 0", v.consensus_stake))
     |> order_by([v], desc: v.consensus_stake)
     |> Chain.join_associations(necessity_by_association)
     |> Chain.select_repo(options).all()

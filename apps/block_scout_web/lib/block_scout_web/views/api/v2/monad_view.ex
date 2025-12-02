@@ -91,7 +91,7 @@ defmodule BlockScoutWeb.API.V2.MonadView do
           event.delegator_address_hash,
           true
         ),
-      amount: to_string(event.amount),
+      amount: wei_to_string(event.amount),
       timestamp: block_timestamp(event)
     }
 
@@ -113,15 +113,18 @@ defmodule BlockScoutWeb.API.V2.MonadView do
           validator.auth_address_hash,
           true
         ),
-      total_stake: to_string(validator.total_stake),
-      consensus_stake: validator.consensus_stake && to_string(validator.consensus_stake),
-      commission: to_string(validator.commission),
-      unclaimed_rewards: validator.unclaimed_rewards && to_string(validator.unclaimed_rewards),
+      total_stake: wei_to_string(validator.total_stake),
+      consensus_stake: wei_to_string(validator.consensus_stake),
+      commission: wei_to_string(validator.commission),
+      unclaimed_rewards: wei_to_string(validator.unclaimed_rewards),
       flags: validator.flags,
       updated_at_block: validator.updated_at_block,
       updated_at: validator.updated_at
     }
   end
+
+  defp wei_to_string(nil), do: nil
+  defp wei_to_string(%Explorer.Chain.Wei{value: value}), do: to_string(value)
 
   defp block_timestamp(%{block: %{timestamp: timestamp}}) when not is_nil(timestamp) do
     DateTime.to_iso8601(timestamp)
