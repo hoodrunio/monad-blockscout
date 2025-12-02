@@ -46,6 +46,7 @@ defmodule Explorer.Chain.Monad.Validator do
     field(:validator_id, :integer, primary_key: true, null: false)
     field(:total_stake, Wei, null: false)
     field(:consensus_stake, Wei)
+    # Commission is scaled by 1e18 (Wei-like): 10^18 = 100%, 10^17 = 10%, 10^16 = 1%
     field(:commission, Wei, null: false)
     field(:unclaimed_rewards, Wei)
     field(:flags, :integer)
@@ -72,7 +73,7 @@ defmodule Explorer.Chain.Monad.Validator do
     |> cast(attrs, @required_attrs ++ @optional_attrs)
     |> validate_required(@required_attrs)
     |> validate_number(:validator_id, greater_than: 0)
-    |> validate_number(:commission, greater_than_or_equal_to: 0)
+    # Note: commission is Wei type, validate_number doesn't work with Wei
     |> foreign_key_constraint(:auth_address_hash)
     |> unique_constraint(:validator_id, name: :monad_validators_pkey)
   end

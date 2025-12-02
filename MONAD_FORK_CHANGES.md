@@ -576,9 +576,9 @@ struct ValidatorMetadata {
     address authAddress;      // Validator auth address
     uint256 totalStake;       // Total staked amount
     uint256 consensusStake;   // Consensus stake
-    uint32 commission;        // Commission rate (scaled by 1e6)
+    uint256 commission;       // Commission rate (scaled by 1e18: 10^18=100%, 10^17=10%)
     uint256 unclaimedRewards; // Pending rewards
-    uint32 flags;             // Status flags
+    uint256 flags;            // Status flags
     bytes secpPubkey;         // SECP256k1 public key
     bytes blsPubkey;          // BLS public key
 }
