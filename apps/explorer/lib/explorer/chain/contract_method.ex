@@ -8,8 +8,8 @@ defmodule Explorer.Chain.ContractMethod do
   import Ecto.Query, only: [from: 2]
   use Explorer.Schema
 
-  alias Explorer.Chain.{Data, Hash, MethodIdentifier, SmartContract}
   alias Explorer.{Chain, Repo}
+  alias Explorer.Chain.{Data, Hash, MethodIdentifier, SmartContract}
 
   typed_schema "contract_methods" do
     field(:identifier, MethodIdentifier)
@@ -35,7 +35,7 @@ defmodule Explorer.Chain.ContractMethod do
         end
       end)
 
-    unless Enum.empty?(errors) do
+    if !Enum.empty?(errors) do
       Logger.error(fn ->
         ["Error parsing some abi elements at ", Hash.to_iodata(address_hash), ": ", Enum.intersperse(errors, "\n")]
       end)

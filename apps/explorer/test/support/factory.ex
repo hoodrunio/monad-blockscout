@@ -1,6 +1,7 @@
 defmodule Explorer.Factory do
   use ExMachina.Ecto, repo: Explorer.Repo
   use Utils.CompileTimeEnvHelper, chain_type: [:explorer, :chain_type]
+  use Utils.RuntimeEnvHelper, chain_type: [:explorer, :chain_type]
 
   require Ecto.Query
 
@@ -58,6 +59,9 @@ defmodule Explorer.Factory do
   alias Explorer.Chain.SmartContract.Proxy.Models.Implementation
   alias Explorer.Chain.Zilliqa.Hash.BLSPublicKey
   alias Explorer.Chain.Zilliqa.Staker, as: ZilliqaStaker
+
+  alias Explorer.Chain.Celo.ElectionReward, as: CeloElectionReward
+  alias Explorer.Chain.Celo.Epoch, as: CeloEpoch
 
   alias Explorer.Migrator.MigrationStatus
 
@@ -144,27 +148,36 @@ defmodule Explorer.Factory do
   end
 
   def watchlist_address_factory do
+    notification_settings = %{
+      "native" => %{
+        "incoming" => random_bool(),
+        "outcoming" => random_bool()
+      },
+      "ERC-20" => %{
+        "incoming" => random_bool(),
+        "outcoming" => random_bool()
+      },
+      "ERC-721" => %{
+        "incoming" => random_bool(),
+        "outcoming" => random_bool()
+      },
+      "ERC-404" => %{
+        "incoming" => random_bool(),
+        "outcoming" => random_bool()
+      }
+    }
+
+    notification_settings_extended =
+      if chain_type() == :zilliqa do
+        Map.put(notification_settings, "ZRC-2", %{"incoming" => random_bool(), "outcoming" => random_bool()})
+      else
+        notification_settings
+      end
+
     %{
       "address_hash" => to_string(build(:address).hash),
       "name" => sequence("test"),
-      "notification_settings" => %{
-        "native" => %{
-          "incoming" => random_bool(),
-          "outcoming" => random_bool()
-        },
-        "ERC-20" => %{
-          "incoming" => random_bool(),
-          "outcoming" => random_bool()
-        },
-        "ERC-721" => %{
-          "incoming" => random_bool(),
-          "outcoming" => random_bool()
-        },
-        "ERC-404" => %{
-          "incoming" => random_bool(),
-          "outcoming" => random_bool()
-        }
-      },
+      "notification_settings" => notification_settings_extended,
       "notification_methods" => %{
         "email" => random_bool()
       }
@@ -174,7 +187,7 @@ defmodule Explorer.Factory do
   def watchlist_address_db_factory(%{wl_id: id}) do
     hash = insert(:address).hash
 
-    %WatchlistAddress{
+    watchlist_address = %WatchlistAddress{
       name: sequence("test"),
       watchlist_id: id,
       address_hash: hash,
@@ -191,6 +204,17 @@ defmodule Explorer.Factory do
       watch_erc_404_output: random_bool(),
       notify_email: random_bool()
     }
+
+    watchlist_address_extended =
+      if chain_type() == :zilliqa do
+        watchlist_address
+        |> Map.put(:watch_zrc_2_input, random_bool())
+        |> Map.put(:watch_zrc_2_output, random_bool())
+      else
+        watchlist_address
+      end
+
+    watchlist_address_extended
   end
 
   def custom_abi_factory do
@@ -1396,6 +1420,27 @@ defmodule Explorer.Factory do
   end
 
   def random_bool, do: Enum.random([true, false])
+
+  def celo_epoch_factory do
+    %CeloEpoch{
+      number: sequence("celo_epoch_number", & &1),
+      fetched?: false,
+      start_block_number: nil,
+      end_block_number: nil,
+      start_processing_block_hash: nil,
+      end_processing_block_hash: nil
+    }
+  end
+
+  def celo_election_reward_factory do
+    %CeloElectionReward{
+      amount: Enum.random(1..100_000),
+      type: Enum.random([:voter, :validator, :group, :delegated_payment]),
+      epoch_number: sequence("celo_election_reward_epoch_number", & &1),
+      account_address_hash: insert(:address).hash,
+      associated_account_address_hash: insert(:address).hash
+    }
+  end
 
   def validator_stability_factory do
     address = insert(:address)

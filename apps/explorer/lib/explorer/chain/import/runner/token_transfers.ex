@@ -3,6 +3,9 @@ defmodule Explorer.Chain.Import.Runner.TokenTransfers do
   Bulk imports `t:Explorer.Chain.TokenTransfer.t/0`.
   """
 
+  use Utils.RuntimeEnvHelper,
+    chain_identity: [:explorer, :chain_identity]
+
   require Ecto.Query
 
   import Ecto.Query, only: [from: 2]
@@ -61,11 +64,6 @@ defmodule Explorer.Chain.Import.Runner.TokenTransfers do
     on_conflict = Map.get_lazy(options, :on_conflict, &default_on_conflict/0)
 
     # Enforce TokenTransfer ShareLocks order (see docs: sharelocks.md)
-    ordered_changes_list =
-      case Application.get_env(:explorer, :chain_type) do
-        :celo -> Enum.sort_by(changes_list, &{&1.block_hash, &1.log_index})
-        _ -> Enum.sort_by(changes_list, &{&1.transaction_hash, &1.block_hash, &1.log_index})
-      end
 
     # Modified for Citus distributed table support
     # Using PRIMARY KEY columns for conflict resolution
@@ -92,8 +90,8 @@ defmodule Explorer.Chain.Import.Runner.TokenTransfers do
   end
 
   defp default_on_conflict do
-    case Application.get_env(:explorer, :chain_type) do
-      :celo ->
+    case chain_identity() do
+      {:optimism, :celo} ->
         from(
           token_transfer in TokenTransfer,
           update: [

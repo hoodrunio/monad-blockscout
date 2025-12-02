@@ -56,6 +56,7 @@ defmodule BlockScoutWeb.Chain do
   alias Explorer.Chain.Optimism.OutputRoot, as: OptimismOutputRoot
   alias Explorer.Chain.Scroll.Bridge, as: ScrollBridge
   alias Explorer.PagingOptions
+  alias Plug.Conn
 
   @page_size page_size()
   @default_paging_options default_paging_options()
@@ -132,12 +133,12 @@ defmodule BlockScoutWeb.Chain do
     end
   end
 
-  @spec next_page_params(any, list(), map(), (any -> map())) :: nil | map
-  def next_page_params(next_page, list, params, paging_function \\ &paging_params/1)
+  @spec next_page_params(any, list(), map(), bool(), (any -> map())) :: nil | map
+  def next_page_params(next_page, list, params, increment_items_count? \\ false, paging_function \\ &paging_params/1)
 
-  def next_page_params([], _list, _params, _), do: nil
+  def next_page_params([], _list, _params, _increment_items_count?, _), do: nil
 
-  def next_page_params(_, list, params, paging_function) do
+  def next_page_params(_, list, params, increment_items_count?, paging_function) do
     paging_params = paging_function.(List.last(list))
 
     string_keys = map_to_string_keys(paging_params)
@@ -148,17 +149,54 @@ defmodule BlockScoutWeb.Chain do
       |> Map.drop(string_keys)
       |> Map.merge(paging_params)
 
-    current_items_count_string = Map.get(next_page_params, "items_count")
+    items_count = next_items_count(next_page_params, list, increment_items_count?)
 
-    items_count =
-      if is_binary(current_items_count_string) do
-        {current_items_count, _} = Integer.parse(current_items_count_string)
-        current_items_count + Enum.count(list)
-      else
-        Enum.count(list)
+    cond do
+      Map.has_key?(next_page_params, "items_count") ->
+        Map.put(next_page_params, "items_count", items_count)
+
+      Map.has_key?(next_page_params, :items_count) ->
+        Map.put(next_page_params, :items_count, items_count)
+
+      true ->
+        Map.put(next_page_params, :items_count, items_count)
+    end
+  end
+
+  defp get_items_count_from_next_page_params(next_page_params) do
+    cond do
+      Map.has_key?(next_page_params, "items_count") ->
+        Map.get(next_page_params, "items_count")
+
+      Map.has_key?(next_page_params, :items_count) ->
+        Map.get(next_page_params, :items_count)
+
+      true ->
+        nil
+    end
+  end
+
+  defp next_items_count(_next_page_params, list, false) do
+    Enum.count(list)
+  end
+
+  defp next_items_count(next_page_params, list, true) do
+    current_items_count_object = get_items_count_from_next_page_params(next_page_params)
+
+    current_items_count =
+      cond do
+        is_binary(current_items_count_object) ->
+          {current_items_count, _} = Integer.parse(current_items_count_object)
+          current_items_count
+
+        is_integer(current_items_count_object) ->
+          current_items_count_object
+
+        true ->
+          0
       end
 
-    Map.put(next_page_params, "items_count", items_count)
+    current_items_count + Enum.count(list)
   end
 
   @doc """
@@ -167,6 +205,31 @@ defmodule BlockScoutWeb.Chain do
   """
   @spec paging_options(any) ::
           [{:paging_options, Explorer.PagingOptions.t()}, ...] | Explorer.PagingOptions.t()
+  # todo: function clause for the old UI, to be removed later
+  def paging_options(%{
+        "hash" => hash_string,
+        "fetched_coin_balance" => fetched_coin_balance_string,
+        "transactions_count" => transactions_count_string
+      })
+      when is_binary(hash_string) do
+    case string_to_address_hash(hash_string) do
+      {:ok, address_hash} ->
+        [
+          paging_options: %{
+            @default_paging_options
+            | key: %{
+                fetched_coin_balance: decimal_parse(fetched_coin_balance_string),
+                hash: address_hash,
+                transactions_count: parse_integer(transactions_count_string)
+              }
+          }
+        ]
+
+      _ ->
+        [paging_options: @default_paging_options]
+    end
+  end
+
   def paging_options(%{
         hash: hash_string,
         fetched_coin_balance: fetched_coin_balance_string,
@@ -519,6 +582,9 @@ defmodule BlockScoutWeb.Chain do
   def paging_options(%{"token_name" => name, "token_type" => type, "token_inserted_at" => inserted_at}),
     do: [paging_options: %{@default_paging_options | key: {name, type, inserted_at}}]
 
+  def paging_options(%{token_name: name, token_type: type, token_inserted_at: inserted_at}),
+    do: [paging_options: %{@default_paging_options | key: {name, type, inserted_at}}]
+
   def paging_options(%{"value" => value, "address_hash" => address_hash}) do
     [paging_options: %{@default_paging_options | key: {value, address_hash}}]
   end
@@ -567,11 +633,19 @@ defmodule BlockScoutWeb.Chain do
     end
   end
 
+  def paging_options(%{value: value, id: id}) do
+    [paging_options: %{@default_paging_options | key: {nil, value, id}}]
+  end
+
   def paging_options(%{"items_count" => items_count_string, "state_changes" => _}) when is_binary(items_count_string) do
     case Integer.parse(items_count_string) do
       {count, ""} -> [paging_options: %{@default_paging_options | key: {count}}]
       _ -> @default_paging_options
     end
+  end
+
+  def paging_options(%{items_count: items_count, state_changes: _}) when is_integer(items_count) do
+    [paging_options: %{@default_paging_options | key: {items_count}}]
   end
 
   def paging_options(%{"l1_block_number" => block_number, "transaction_hash" => transaction_hash}) do
@@ -689,6 +763,26 @@ defmodule BlockScoutWeb.Chain do
   end
 
   def paging_options(_params), do: [paging_options: @default_paging_options]
+
+  def hot_smart_contracts_paging_options(%{
+        transactions_count: transactions_count,
+        total_gas_used: total_gas_used,
+        contract_address_hash: contract_address_hash
+      }) do
+    [
+      paging_options: %{
+        @default_paging_options
+        | key: %{
+            transactions_count: transactions_count,
+            total_gas_used: total_gas_used,
+            contract_address_hash: contract_address_hash,
+            to_address_hash: contract_address_hash
+          }
+      }
+    ]
+  end
+
+  def hot_smart_contracts_paging_options(_params), do: [paging_options: @default_paging_options]
 
   def put_key_value_to_paging_options([paging_options: paging_options], key, value) do
     [paging_options: Map.put(paging_options, key, value)]
@@ -859,7 +953,7 @@ defmodule BlockScoutWeb.Chain do
   end
 
   defp paging_params(%Transaction{block_number: nil, inserted_at: inserted_at, hash: hash}) do
-    %{"inserted_at" => DateTime.to_iso8601(inserted_at), "hash" => hash}
+    %{inserted_at: DateTime.to_iso8601(inserted_at), hash: hash}
   end
 
   defp paging_params(%Transaction{block_number: block_number, index: index}) do
@@ -885,7 +979,7 @@ defmodule BlockScoutWeb.Chain do
   end
 
   defp paging_params(%SmartContract{address: %NotLoaded{}} = smart_contract) do
-    %{"smart_contract_id" => smart_contract.id}
+    %{smart_contract_id: smart_contract.id}
   end
 
   defp paging_params(%OptimismDeposit{l1_block_number: l1_block_number, l2_transaction_hash: l2_transaction_hash}) do
@@ -902,9 +996,9 @@ defmodule BlockScoutWeb.Chain do
 
   defp paging_params(%SmartContract{} = smart_contract) do
     %{
-      "smart_contract_id" => smart_contract.id,
-      "transactions_count" => smart_contract.address.transactions_count,
-      "coin_balance" =>
+      smart_contract_id: smart_contract.id,
+      transactions_count: smart_contract.address.transactions_count,
+      coin_balance:
         smart_contract.address.fetched_coin_balance && Wei.to(smart_contract.address.fetched_coin_balance, :wei)
     }
   end
@@ -939,7 +1033,8 @@ defmodule BlockScoutWeb.Chain do
   end
 
   defp paging_params(%StateChange{}) do
-    %{"state_changes" => nil}
+    # todo: remove in the future as this param is unused in the pagination of state changes
+    %{state_changes: nil}
   end
 
   # clause for Polygon Edge Deposits and Withdrawals
@@ -1011,6 +1106,17 @@ defmodule BlockScoutWeb.Chain do
 
   def token_transfers_next_page_params([], _list, _params), do: nil
 
+  @batch_transfer_fields_to_delete_from_next_page_params [
+    "batch_log_index",
+    "batch_block_hash",
+    "batch_transaction_hash",
+    "index_in_batch",
+    :batch_log_index,
+    :batch_block_hash,
+    :batch_transaction_hash,
+    :index_in_batch
+  ]
+
   def token_transfers_next_page_params(next_page, list, params) do
     next_token_transfer = List.first(next_page)
     current_token_transfer = List.last(list)
@@ -1023,11 +1129,12 @@ defmodule BlockScoutWeb.Chain do
         |> last_token_transfer_before_current(current_token_transfer)
         |> (&if(is_nil(&1), do: %{}, else: paging_params(&1))).()
 
+      # todo: consider removing it, when all controllers will get OpenAPI specs
       string_keys = map_to_string_keys(new_params)
 
       params
       |> delete_parameters_from_next_page_params()
-      |> Map.drop(["batch_log_index", "batch_block_hash", "batch_transaction_hash", "index_in_batch" | string_keys])
+      |> Map.drop(@batch_transfer_fields_to_delete_from_next_page_params ++ string_keys)
       |> Map.merge(new_params)
       |> Map.merge(%{
         batch_log_index: current_token_transfer.log_index,
@@ -1038,11 +1145,12 @@ defmodule BlockScoutWeb.Chain do
     else
       new_params = paging_params(List.last(list))
 
+      # todo: consider removing it, when all controllers will get OpenAPI specs
       string_keys = map_to_string_keys(new_params)
 
       params
       |> delete_parameters_from_next_page_params()
-      |> Map.drop(["batch_log_index", "batch_block_hash", "batch_transaction_hash", "index_in_batch" | string_keys])
+      |> Map.drop(@batch_transfer_fields_to_delete_from_next_page_params ++ string_keys)
       |> Map.merge(new_params)
     end
   end
@@ -1085,20 +1193,36 @@ defmodule BlockScoutWeb.Chain do
   end
 
   @doc """
-  Fetches the scam token toggle from conn.cookies["show_scam_tokens"]. And put it to the params keyword.
+  Determines the scam token toggle value and adds it to the params keyword list.
+
+  The function checks for the scam token toggle in the following order:
+  1. Looks for the `"show-scam-tokens"` request header
+  2. Falls back to the `"show_scam_tokens"` cookie if the header is not present
+  3. Parses the retrieved value as a boolean (defaults to `false` if the value
+     is neither `"true"`, `"false"`, `true`, nor `false`)
 
   ## Parameters
-
-    - params: Initial params to append scam token toggle info.
-    - conn: The connection.
+  - `params`: Initial params keyword list to append scam token toggle info.
+  - `conn`: The connection struct.
 
   ## Returns
-
-  Provided params keyword with the new field `show_scam_tokens?`.
+  The provided params keyword list with the added `show_scam_tokens?` field
+  set to a boolean value.
   """
   @spec fetch_scam_token_toggle(Keyword.t(), Plug.Conn.t()) :: Keyword.t()
-  def fetch_scam_token_toggle(params, conn),
-    do: Keyword.put(params, :show_scam_tokens?, conn.cookies["show_scam_tokens"] |> parse_boolean())
+  def fetch_scam_token_toggle(params, conn) do
+    Keyword.put(
+      params,
+      :show_scam_tokens?,
+      conn
+      |> Conn.get_req_header("show-scam-tokens")
+      |> case do
+        [show_scam_tokens?] -> show_scam_tokens?
+        _ -> conn.cookies["show_scam_tokens"]
+      end
+      |> parse_boolean()
+    )
+  end
 
   defp map_to_string_keys(map) do
     map

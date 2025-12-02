@@ -3,6 +3,9 @@ defmodule Explorer.Chain.Import.Runner.Logs do
   Bulk imports `t:Explorer.Chain.Log.t/0`.
   """
 
+  use Utils.RuntimeEnvHelper,
+    chain_identity: [:explorer, :chain_identity]
+
   require Ecto.Query
 
   alias Ecto.{Changeset, Multi, Repo}
@@ -94,8 +97,8 @@ defmodule Explorer.Chain.Import.Runner.Logs do
   end
 
   defp default_on_conflict do
-    case Application.get_env(:explorer, :chain_type) do
-      :celo ->
+    case chain_identity() do
+      {:optimism, :celo} ->
         from(
           log in Log,
           update: [

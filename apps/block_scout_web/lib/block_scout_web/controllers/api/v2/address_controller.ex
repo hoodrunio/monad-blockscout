@@ -1,13 +1,13 @@
 defmodule BlockScoutWeb.API.V2.AddressController do
   use BlockScoutWeb, :controller
-  use Utils.CompileTimeEnvHelper, chain_type: [:explorer, :chain_type]
+  use Utils.CompileTimeEnvHelper, chain_identity: [:explorer, :chain_identity], chain_type: [:explorer, :chain_type]
   use Utils.RuntimeEnvHelper, chain_type: [:explorer, :chain_type]
   use OpenApiSpex.ControllerSpecs
 
   import BlockScoutWeb.Chain,
     only: [
       next_page_params: 3,
-      next_page_params: 4,
+      next_page_params: 5,
       token_transfers_next_page_params: 3,
       paging_options: 1,
       split_list_by_page: 1,
@@ -55,8 +55,8 @@ defmodule BlockScoutWeb.API.V2.AddressController do
   alias Indexer.Fetcher.OnDemand.ContractCode, as: ContractCodeOnDemand
   alias Indexer.Fetcher.OnDemand.TokenBalance, as: TokenBalanceOnDemand
 
-  case @chain_type do
-    :celo ->
+  case @chain_identity do
+    {:optimism, :celo} ->
       @chain_type_transaction_necessity_by_association %{
         [gas_token: reputation_association()] => :optional
       }
@@ -89,8 +89,8 @@ defmodule BlockScoutWeb.API.V2.AddressController do
     api?: true
   ]
 
-  case @chain_type do
-    :celo ->
+  case @chain_identity do
+    {:optimism, :celo} ->
       @chain_type_address_necessity_by_association %{
         [
           celo_account: [
@@ -192,7 +192,8 @@ defmodule BlockScoutWeb.API.V2.AddressController do
     with {:ok, address_hash} <- validate_address_hash(address_hash_string, params) do
       case Chain.hash_to_address(address_hash, @address_options) do
         {:ok, address} ->
-          fully_preloaded_address =
+          %Address{} =
+            fully_preloaded_address =
             Address.maybe_preload_smart_contract_associations(address, contract_address_preloads(), @api_true)
 
           implementations = SmartContractHelper.pre_fetch_implementations(fully_preloaded_address)
@@ -236,7 +237,7 @@ defmodule BlockScoutWeb.API.V2.AddressController do
       "Retrieves count statistics for an address, including transactions, token transfers, gas usage, and validations.",
     parameters: [address_hash_param() | base_params()],
     responses: [
-      ok: {"Count statistics for the specified address", "application/json", Schemas.Address.Counters},
+      ok: {"Count statistics for the specified address.", "application/json", Schemas.Address.Counters},
       unprocessable_entity: JsonErrorResponse.response(),
       forbidden: ForbiddenResponse.response()
     ]
@@ -283,10 +284,15 @@ defmodule BlockScoutWeb.API.V2.AddressController do
     end
   end
 
+  if @chain_type == :zilliqa do
+    @token_balances_operation_description "Retrieves all token balances held by a specific address, including ERC-20, ERC-721, ERC-1155, ERC-404, and ZRC-2 tokens."
+  else
+    @token_balances_operation_description "Retrieves all token balances held by a specific address, including ERC-20, ERC-721, ERC-1155, and ERC-404 tokens."
+  end
+
   operation :token_balances,
     summary: "List all token balances held by a specific address",
-    description:
-      "Retrieves all token balances held by a specific address, including ERC-20, ERC-721, ERC-1155 and ERC-404 tokens.",
+    description: @token_balances_operation_description,
     parameters: [address_hash_param() | base_params()],
     responses: [
       ok:
@@ -413,6 +419,7 @@ defmodule BlockScoutWeb.API.V2.AddressController do
             |> next_page_params(
               transactions,
               params,
+              false,
               &Transaction.address_transactions_next_page_params/1
             )
 
@@ -945,6 +952,7 @@ defmodule BlockScoutWeb.API.V2.AddressController do
             |> next_page_params(
               tokens,
               params,
+              false,
               &paging_params_with_fiat_value/1
             )
 
@@ -1243,6 +1251,7 @@ defmodule BlockScoutWeb.API.V2.AddressController do
             |> next_page_params(
               nfts,
               params,
+              false,
               &Instance.nft_list_next_page_params/1
             )
 
@@ -1319,6 +1328,7 @@ defmodule BlockScoutWeb.API.V2.AddressController do
             |> next_page_params(
               collections,
               params,
+              false,
               &Instance.nft_collections_next_page_params/1
             )
 
@@ -1391,6 +1401,7 @@ defmodule BlockScoutWeb.API.V2.AddressController do
           next_page,
           rewards,
           filtered_params,
+          false,
           &%{
             epoch_number: &1.epoch_number,
             amount: &1.amount,
@@ -1469,7 +1480,7 @@ defmodule BlockScoutWeb.API.V2.AddressController do
     ]
 
   @doc """
-  Handles `api/v2/addresses/:address_hash/beacon/deposits` endpoint.
+  Handles `api/v2/addresses/:address_hash_param/beacon/deposits` endpoint.
   Fetches beacon deposits for a given address with pagination support.
 
   This endpoint retrieves all beacon deposits originating from the specified
@@ -1514,6 +1525,7 @@ defmodule BlockScoutWeb.API.V2.AddressController do
         |> next_page_params(
           deposits,
           params,
+          false,
           DepositController.paging_function()
         )
 
