@@ -67,6 +67,12 @@ defmodule Indexer.Fetcher.Monad.Validator do
     {:noreply, state}
   end
 
+  # Catch-all for unexpected messages (e.g., task responses, monitor messages)
+  @impl GenServer
+  def handle_info(_msg, state) do
+    {:noreply, state}
+  end
+
   defp fetch_all_validators(json_rpc_named_arguments) do
     Logger.info("Starting Monad validator fetch")
 
