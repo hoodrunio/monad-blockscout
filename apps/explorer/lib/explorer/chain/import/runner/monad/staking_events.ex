@@ -75,7 +75,7 @@ defmodule Explorer.Chain.Import.Runner.Monad.StakingEvents do
         timeout: timeout,
         timestamps: timestamps,
         conflict_target: [:block_number, :log_index],
-        on_conflict: :replace_all_except_primary_key
+        on_conflict: :replace_all
       )
 
     {:ok, inserted}
