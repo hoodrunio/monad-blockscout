@@ -55,6 +55,8 @@ defmodule Explorer.Repo.Monad.Migrations.CreateMonadStakingTables do
 
     # Validators Table
     # Note: No FK constraints - Citus requires tables to be distributed first
+    # auth_address_hash FK is added by citus-migration.sql after distribution
+    # The validator fetcher creates addresses during import to satisfy the FK
     create table(:monad_validators, primary_key: false) do
       add(:validator_id, :integer, null: false, primary_key: true)
 

@@ -264,7 +264,14 @@ defmodule Indexer.Fetcher.Monad.Validator do
   defp import_validators([]), do: :ok
 
   defp import_validators(validators) do
+    # Extract unique addresses from validators to ensure they exist before FK check
+    addresses =
+      validators
+      |> Enum.map(fn v -> %{hash: v.auth_address_hash} end)
+      |> Enum.uniq_by(& &1.hash)
+
     case Chain.import(%{
+           addresses: %{params: addresses},
            monad_validators: %{params: validators},
            timeout: :infinity
          }) do
