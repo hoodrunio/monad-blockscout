@@ -161,7 +161,10 @@ defmodule Indexer.Fetcher.OnDemand.Block do
     if Enum.empty?(blocks_params) do
       {:error, :empty_response}
     else
-      blocks = TransformBlocks.transform_blocks(blocks_params)
+      blocks =
+        blocks_params
+        |> TransformBlocks.transform_blocks()
+        |> Enum.map(&Map.put(&1, :consensus, true))
 
       # Fetch receipts for transactions
       receipts_result = fetch_receipts(transactions_params_without_receipts, json_rpc_args)
