@@ -132,16 +132,16 @@ defmodule Indexer.Fetcher.Monad.Validator do
     }
   end
 
-  defp parse_validator_response(validator_id, %{"result" => "0x" <> _ = result}) when byte_size(result) > 2 do
+  defp parse_validator_response(validator_id, %{result: "0x" <> _ = result}) when byte_size(result) > 2 do
     parse_validator_data(validator_id, result)
   end
 
-  defp parse_validator_response(_validator_id, %{"result" => "0x"}) do
+  defp parse_validator_response(_validator_id, %{result: "0x"}) do
     # Empty result means validator doesn't exist
     nil
   end
 
-  defp parse_validator_response(_validator_id, %{"error" => error}) do
+  defp parse_validator_response(_validator_id, %{error: error}) do
     Logger.debug("Error fetching validator: #{inspect(error)}")
     nil
   end
