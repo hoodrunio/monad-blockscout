@@ -36,6 +36,7 @@ defmodule Explorer.Chain.Monad.Validator do
   @optional_attrs ~w(
     consensus_stake
     unclaimed_rewards
+    validator_unclaimed_rewards
     flags
     secp_pubkey
     bls_pubkey
@@ -49,6 +50,8 @@ defmodule Explorer.Chain.Monad.Validator do
     # Commission is scaled by 1e18 (Wei-like): 10^18 = 100%, 10^17 = 10%, 10^16 = 1%
     field(:commission, Wei, null: false)
     field(:unclaimed_rewards, Wei)
+    # Validator operator's personal unclaimed rewards (from getDelegator call with auth_address)
+    field(:validator_unclaimed_rewards, Wei)
     field(:flags, :integer)
     field(:secp_pubkey, :binary)
     field(:bls_pubkey, :binary)

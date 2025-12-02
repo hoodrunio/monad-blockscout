@@ -73,7 +73,8 @@ defmodule Explorer.Chain.Import.Stage.ChainTypeSpecific do
     ],
     monad: [
       Runner.Monad.StakingEvents,
-      Runner.Monad.Validators
+      Runner.Monad.Validators,
+      Runner.Monad.DelegatorPositions
     ]
   }
 

@@ -1,13 +1,13 @@
-defmodule Explorer.Chain.Import.Runner.Monad.Validators do
+defmodule Explorer.Chain.Import.Runner.Monad.DelegatorPositions do
   @moduledoc """
-  Bulk imports `t:Explorer.Chain.Monad.Validator.t/0`.
+  Bulk imports `t:Explorer.Chain.Monad.DelegatorPosition.t/0`.
   """
 
   require Ecto.Query
 
   alias Ecto.{Changeset, Multi, Repo}
   alias Explorer.Chain.Import
-  alias Explorer.Chain.Monad.Validator
+  alias Explorer.Chain.Monad.DelegatorPosition
   alias Explorer.Prometheus.Instrumenter
 
   @behaviour Import.Runner
@@ -15,13 +15,13 @@ defmodule Explorer.Chain.Import.Runner.Monad.Validators do
   # milliseconds
   @timeout 60_000
 
-  @type imported :: [Validator.t()]
+  @type imported :: [DelegatorPosition.t()]
 
   @impl Import.Runner
-  def ecto_schema_module, do: Validator
+  def ecto_schema_module, do: DelegatorPosition
 
   @impl Import.Runner
-  def option_key, do: :monad_validators
+  def option_key, do: :monad_delegator_positions
 
   @impl Import.Runner
   @spec imported_table_row() :: %{:value_description => binary(), :value_type => binary()}
@@ -42,12 +42,12 @@ defmodule Explorer.Chain.Import.Runner.Monad.Validators do
       |> Map.put_new(:timeout, @timeout)
       |> Map.put(:timestamps, timestamps)
 
-    Multi.run(multi, :insert_monad_validators, fn repo, _ ->
+    Multi.run(multi, :insert_monad_delegator_positions, fn repo, _ ->
       Instrumenter.block_import_stage_runner(
         fn -> upsert(repo, changes_list, insert_options) end,
         :block_referencing,
-        :monad_validators,
-        :monad_validators
+        :monad_delegator_positions,
+        :monad_delegator_positions
       )
     end)
   end
@@ -56,37 +56,30 @@ defmodule Explorer.Chain.Import.Runner.Monad.Validators do
   def timeout, do: @timeout
 
   @spec upsert(Repo.t(), [map()], %{required(:timeout) => timeout(), required(:timestamps) => Import.timestamps()}) ::
-          {:ok, [Validator.t()]}
+          {:ok, [DelegatorPosition.t()]}
           | {:error, [Changeset.t()]}
   def upsert(repo, changes_list, %{timeout: timeout, timestamps: timestamps} = _options) when is_list(changes_list) do
-    # Enforce Validator ShareLocks order (see docs: sharelock.md)
+    # Enforce DelegatorPosition ShareLocks order (see docs: sharelock.md)
     ordered_changes_list =
       Enum.sort_by(
         changes_list,
-        & &1.validator_id
+        &{&1.delegator_address_hash, &1.validator_id}
       )
 
     {:ok, inserted} =
       Import.insert_changes_list(
         repo,
         ordered_changes_list,
-        for: Validator,
+        for: DelegatorPosition,
         returning: true,
         timeout: timeout,
         timestamps: timestamps,
-        conflict_target: [:validator_id],
+        conflict_target: [:delegator_address_hash, :validator_id],
         on_conflict:
           {:replace,
            [
-             :auth_address_hash,
-             :total_stake,
-             :consensus_stake,
-             :commission,
+             :stake,
              :unclaimed_rewards,
-             :validator_unclaimed_rewards,
-             :flags,
-             :secp_pubkey,
-             :bls_pubkey,
              :updated_at_block,
              :updated_at
            ]}

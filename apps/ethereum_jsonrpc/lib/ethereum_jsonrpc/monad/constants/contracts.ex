@@ -145,4 +145,35 @@ defmodule EthereumJSONRPC.Monad.Constants.Contracts do
   """
   @spec get_execution_validator_set_selector() :: String.t()
   def get_execution_validator_set_selector, do: "0x7cb074df"
+
+  @doc """
+  Returns the ABI for getDelegations(address, uint64) function.
+
+  Returns paginated list of validator IDs that an address has delegated to.
+  """
+  @spec get_delegations_abi() :: [map()]
+  def get_delegations_abi do
+    [
+      %{
+        "type" => "function",
+        "name" => "getDelegations",
+        "inputs" => [
+          %{"name" => "delegator", "type" => "address", "internalType" => "address"},
+          %{"name" => "startValId", "type" => "uint64", "internalType" => "uint64"}
+        ],
+        "outputs" => [
+          %{"name" => "isDone", "type" => "bool", "internalType" => "bool"},
+          %{"name" => "nextValId", "type" => "uint64", "internalType" => "uint64"},
+          %{"name" => "valIds", "type" => "uint64[]", "internalType" => "uint64[]"}
+        ],
+        "stateMutability" => "nonpayable"
+      }
+    ]
+  end
+
+  @doc """
+  Returns the function selector for getDelegations(address, uint64).
+  """
+  @spec get_delegations_selector() :: String.t()
+  def get_delegations_selector, do: "0x4fd66050"
 end

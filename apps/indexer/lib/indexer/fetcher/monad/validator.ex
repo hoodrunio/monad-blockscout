@@ -104,10 +104,96 @@ defmodule Indexer.Fetcher.Monad.Validator do
     if Enum.empty?(validators) do
       Logger.info("No Monad validators found")
     else
-      Logger.info("Found #{length(validators)} Monad validators")
-      import_validators(validators)
+      Logger.info("Found #{length(validators)} Monad validators, fetching delegator rewards...")
+
+      # Fetch validator's personal unclaimed rewards via getDelegator
+      validators_with_rewards = fetch_delegator_rewards(validators, json_rpc_named_arguments)
+
+      import_validators(validators_with_rewards)
     end
   end
+
+  # Fetch validator operator's personal unclaimed rewards using getDelegator(validatorId, authAddress)
+  defp fetch_delegator_rewards(validators, json_rpc_named_arguments) do
+    validators
+    |> Enum.chunk_every(@batch_size)
+    |> Enum.flat_map(fn batch ->
+      requests =
+        Enum.map(batch, fn v ->
+          build_get_delegator_request(v.validator_id, v.auth_address_hash)
+        end)
+
+      case EthereumJSONRPC.json_rpc(requests, json_rpc_named_arguments) do
+        {:ok, responses} ->
+          Enum.zip(batch, responses)
+          |> Enum.map(fn {validator, response} ->
+            delegator_rewards = parse_delegator_rewards_response(response)
+            Map.put(validator, :validator_unclaimed_rewards, delegator_rewards)
+          end)
+
+        {:error, reason} ->
+          Logger.warning("Failed to fetch delegator rewards batch: #{inspect(reason)}")
+          # Return validators without the rewards field if fetch fails
+          batch
+      end
+    end)
+  end
+
+  defp build_get_delegator_request(validator_id, auth_address_hash) do
+    staking_address = Contracts.staking_precompile()
+    selector = Contracts.get_delegator_selector()
+
+    # Encode validator_id as uint64 (padded to 32 bytes)
+    encoded_id = validator_id |> Integer.to_string(16) |> String.pad_leading(64, "0")
+
+    # Encode address (20 bytes padded to 32 bytes)
+    encoded_address =
+      auth_address_hash
+      |> Hash.Address.to_string()
+      |> String.trim_leading("0x")
+      |> String.downcase()
+      |> String.pad_leading(64, "0")
+
+    %{
+      id: validator_id,
+      jsonrpc: "2.0",
+      method: "eth_call",
+      params: [
+        %{
+          to: staking_address,
+          data: selector <> encoded_id <> encoded_address
+        },
+        "latest"
+      ]
+    }
+  end
+
+  defp parse_delegator_rewards_response(%{result: "0x" <> hex_data}) when byte_size(hex_data) >= 448 do
+    # getDelegator returns (encoded as 7 * 32 bytes = 224 bytes = 448 hex chars):
+    # stake: uint256
+    # accRewardPerToken: uint256
+    # unclaimedRewards: uint256  <-- This is what we want (index 2)
+    # deltaStake: uint256
+    # nextDeltaStake: uint256
+    # deltaEpoch: uint64
+    # nextDeltaEpoch: uint64
+    case Base.decode16(hex_data, case: :mixed) do
+      {:ok, data} when byte_size(data) >= 96 ->
+        <<
+          _stake::unsigned-big-integer-size(256),
+          _acc_reward_per_token::unsigned-big-integer-size(256),
+          unclaimed_rewards::unsigned-big-integer-size(256),
+          _rest::binary
+        >> = data
+
+        unclaimed_rewards
+
+      _ ->
+        nil
+    end
+  end
+
+  defp parse_delegator_rewards_response(_), do: nil
 
   defp fetch_validator_batch(validator_ids, json_rpc_named_arguments) do
     validator_ids

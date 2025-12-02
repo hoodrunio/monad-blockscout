@@ -20,7 +20,8 @@ defmodule BlockScoutWeb.API.V2.MonadController do
   import Explorer.PagingOptions, only: [default_paging_options: 0]
 
   alias Explorer.Chain.Hash
-  alias Explorer.Chain.Monad.{StakingEvent, Validator}
+  alias Explorer.Chain.Monad.{DelegatorPosition, StakingEvent, Validator}
+  alias Indexer.Fetcher.Monad.DelegatorOnDemand
 
   action_fallback(BlockScoutWeb.API.V2.FallbackController)
 
@@ -70,21 +71,87 @@ defmodule BlockScoutWeb.API.V2.MonadController do
   GET /api/v2/addresses/:address_hash/monad/staking-stats
 
   Returns aggregated staking statistics for an address.
+  Combines data from indexed events and cached delegator positions.
+  If cached positions are stale or missing, fetches from RPC.
   """
   @spec staking_stats(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def staking_stats(conn, %{"address_hash_param" => address_hash_string}) do
     with {:ok, address_hash} <- Hash.Address.cast(address_hash_string) do
+      # Get event-based statistics (from indexed events)
       total_rewards_claimed = StakingEvent.aggregate_rewards_by_address(address_hash, @api_true)
-      total_delegated = StakingEvent.aggregate_delegations_by_address(address_hash, @api_true)
       event_counts = StakingEvent.count_by_address_and_type(address_hash, @api_true)
+
+      # Get position-based statistics (from cache or RPC)
+      {total_delegated, total_unclaimed_rewards, positions} =
+        get_position_stats(address_hash)
 
       conn
       |> render(:staking_stats, %{
         total_rewards_claimed: total_rewards_claimed,
         total_delegated: total_delegated,
-        event_counts: event_counts
+        total_unclaimed_rewards: total_unclaimed_rewards,
+        event_counts: event_counts,
+        positions: positions
       })
     end
+  end
+
+  # Get position stats from cache or RPC
+  defp get_position_stats(address_hash) do
+    # Check if we have fresh cached positions (5 minute TTL)
+    if DelegatorPosition.has_fresh_positions?(address_hash, @api_true) do
+      # Use cached data
+      positions = DelegatorPosition.get_by_address(address_hash, @api_true)
+      total_delegated = DelegatorPosition.total_stake_by_address(address_hash, @api_true)
+      total_unclaimed = DelegatorPosition.total_unclaimed_rewards_by_address(address_hash, @api_true)
+
+      {total_delegated, total_unclaimed, format_positions(positions)}
+    else
+      # Fetch from RPC and cache
+      case DelegatorOnDemand.fetch_and_cache(address_hash) do
+        {:ok, positions} when positions != [] ->
+          total_delegated =
+            positions
+            |> Enum.map(& &1.stake)
+            |> Enum.reduce(Decimal.new(0), fn stake, acc ->
+              Decimal.add(acc, Decimal.new(stake))
+            end)
+
+          total_unclaimed =
+            positions
+            |> Enum.map(&(&1[:unclaimed_rewards] || 0))
+            |> Enum.reduce(Decimal.new(0), fn rewards, acc ->
+              Decimal.add(acc, Decimal.new(rewards))
+            end)
+
+          {total_delegated, total_unclaimed, format_raw_positions(positions)}
+
+        _ ->
+          # Fallback to event-based calculation if RPC fails
+          total_delegated = StakingEvent.aggregate_delegations_by_address(address_hash, @api_true)
+          {total_delegated, Decimal.new(0), []}
+      end
+    end
+  end
+
+  defp format_positions(positions) do
+    Enum.map(positions, fn pos ->
+      %{
+        validator_id: pos.validator_id,
+        stake: pos.stake,
+        unclaimed_rewards: pos.unclaimed_rewards
+      }
+    end)
+  end
+
+  defp format_raw_positions(positions) do
+    Enum.map(positions, fn pos ->
+      %{
+        validator_id: pos.validator_id,
+        stake: pos.stake,
+        unclaimed_rewards: pos[:unclaimed_rewards]
+      }
+    end)
   end
 
   @doc """

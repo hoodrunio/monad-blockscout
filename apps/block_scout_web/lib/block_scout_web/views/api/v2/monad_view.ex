@@ -27,15 +27,27 @@ defmodule BlockScoutWeb.API.V2.MonadView do
   def render("staking_stats.json", %{
         total_rewards_claimed: total_rewards_claimed,
         total_delegated: total_delegated,
-        event_counts: event_counts
+        total_unclaimed_rewards: total_unclaimed_rewards,
+        event_counts: event_counts,
+        positions: positions
       }) do
     %{
-      total_rewards_claimed: to_string(total_rewards_claimed),
-      total_delegated: to_string(total_delegated),
+      total_rewards_claimed: wei_to_string(total_rewards_claimed),
+      total_delegated: wei_to_string(total_delegated),
+      total_unclaimed_rewards: wei_to_string(total_unclaimed_rewards),
       event_counts:
         Map.new(event_counts, fn {type, count} ->
           {to_string(type), count}
-        end)
+        end),
+      positions: Enum.map(positions, &prepare_position/1)
+    }
+  end
+
+  defp prepare_position(%{validator_id: validator_id, stake: stake, unclaimed_rewards: unclaimed_rewards}) do
+    %{
+      validator_id: validator_id,
+      stake: wei_to_string(stake),
+      unclaimed_rewards: wei_to_string(unclaimed_rewards)
     }
   end
 
@@ -117,6 +129,7 @@ defmodule BlockScoutWeb.API.V2.MonadView do
       consensus_stake: wei_to_string(validator.consensus_stake),
       commission: wei_to_string(validator.commission),
       unclaimed_rewards: wei_to_string(validator.unclaimed_rewards),
+      validator_unclaimed_rewards: wei_to_string(validator.validator_unclaimed_rewards),
       flags: validator.flags,
       updated_at_block: validator.updated_at_block,
       updated_at: validator.updated_at
