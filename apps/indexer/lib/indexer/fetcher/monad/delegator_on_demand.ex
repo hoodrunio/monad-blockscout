@@ -110,7 +110,7 @@ defmodule Indexer.Fetcher.Monad.DelegatorOnDemand do
     # Encode address (20 bytes padded to 32 bytes)
     encoded_address =
       address_hash
-      |> Hash.Address.to_string()
+      |> to_string()
       |> String.trim_leading("0x")
       |> String.downcase()
       |> String.pad_leading(64, "0")
@@ -230,7 +230,7 @@ defmodule Indexer.Fetcher.Monad.DelegatorOnDemand do
     # Encode address (20 bytes padded to 32 bytes)
     encoded_address =
       address_hash
-      |> Hash.Address.to_string()
+      |> to_string()
       |> String.trim_leading("0x")
       |> String.downcase()
       |> String.pad_leading(64, "0")
