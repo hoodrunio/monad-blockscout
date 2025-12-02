@@ -250,7 +250,7 @@ defmodule Indexer.Fetcher.OnDemand.Block do
       transport: EthereumJSONRPC.HTTP,
       transport_options: [
         http: EthereumJSONRPC.HTTP.HTTPoison,
-        url: url,
+        urls: [url],
         http_options: [recv_timeout: timeout(), timeout: timeout()]
       ]
     ]
