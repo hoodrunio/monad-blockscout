@@ -188,6 +188,17 @@ defmodule Explorer.Chain.Monad.StakingEvent do
     %{block_number: block_number, log_index: log_index}
   end
 
+  @doc """
+  Returns the last (highest) block number that has staking events.
+  Used for catchup/backfill to determine where to resume from.
+  """
+  @spec get_last_block_number(keyword()) :: non_neg_integer() | nil
+  def get_last_block_number(options \\ []) do
+    __MODULE__
+    |> select([e], max(e.block_number))
+    |> Chain.select_repo(options).one()
+  end
+
   # Private functions
 
   defp apply_event_type_filter(query, []), do: query

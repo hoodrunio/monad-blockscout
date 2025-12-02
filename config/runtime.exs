@@ -1557,6 +1557,15 @@ config :indexer, Indexer.Fetcher.Monad.Supervisor,
   enabled: ConfigHelper.chain_type() == :monad,
   disabled?: ConfigHelper.chain_type() != :monad
 
+config :indexer, Indexer.Fetcher.Monad.StakingEventsCatchup,
+  enabled:
+    ConfigHelper.chain_type() == :monad and
+      ConfigHelper.parse_bool_env_var("INDEXER_MONAD_STAKING_CATCHUP_ENABLED", "false"),
+  start_block: ConfigHelper.parse_integer_env_var("INDEXER_MONAD_STAKING_CATCHUP_START_BLOCK", 1),
+  logs_batch_size: ConfigHelper.parse_integer_env_var("INDEXER_MONAD_STAKING_CATCHUP_BATCH_SIZE", 1000),
+  block_check_interval:
+    ConfigHelper.parse_integer_env_var("INDEXER_MONAD_STAKING_CATCHUP_CHECK_INTERVAL", 5000)
+
 config :indexer, Indexer.Fetcher.Filecoin.BeryxAPI,
   base_url: ConfigHelper.safe_get_env("BERYX_API_BASE_URL", "https://api.zondax.ch/fil/data/v3/mainnet"),
   api_token: System.get_env("BERYX_API_TOKEN")

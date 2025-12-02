@@ -47,18 +47,8 @@ defmodule Indexer.Transform.Monad.StakingEvents do
   end
 
   defp staking_event?(log, staking_address) do
-    address =
-      case log do
-        %{address_hash: %Hash{} = hash} -> Hash.to_string(hash) |> String.downcase()
-        %{address_hash: address} when is_binary(address) -> String.downcase(address)
-        _ -> nil
-      end
-
-    first_topic =
-      case log do
-        %{first_topic: topic} when is_binary(topic) -> topic
-        _ -> nil
-      end
+    address = get_log_address(log)
+    first_topic = get_log_topic(log, 0)
 
     address == staking_address and
       first_topic != nil and
@@ -66,15 +56,13 @@ defmodule Indexer.Transform.Monad.StakingEvents do
   end
 
   defp parse_log(log) do
-    first_topic =
-      case log do
-        %{first_topic: topic} when is_binary(topic) -> topic
-        _ -> nil
-      end
+    # Normalize log to have consistent access
+    normalized_log = normalize_log(log)
+    first_topic = get_log_topic(log, 0)
 
     event_type = Events.signature_to_type(first_topic)
 
-    case decode_event(event_type, log) do
+    case decode_event(event_type, normalized_log) do
       {:ok, decoded} ->
         build_event_record(event_type, log, decoded)
 
@@ -82,6 +70,54 @@ defmodule Indexer.Transform.Monad.StakingEvents do
         Logger.warning("Failed to decode Monad staking event: #{inspect(reason)}, log: #{inspect(log)}")
         nil
     end
+  end
+
+  # Log field accessors that handle both block import format (atom keys) and eth_getLogs format (string keys)
+
+  defp get_log_address(log) do
+    address =
+      case log do
+        # Block import format
+        %{address_hash: %Hash{} = hash} -> Hash.to_string(hash)
+        %{address_hash: address} when is_binary(address) -> address
+        # eth_getLogs format
+        %{"address" => address} when is_binary(address) -> address
+        _ -> nil
+      end
+
+    if address, do: String.downcase(address), else: nil
+  end
+
+  defp get_log_topic(log, index) do
+    case log do
+      # Block import format
+      %{first_topic: topic} when index == 0 -> topic
+      %{second_topic: topic} when index == 1 -> topic
+      %{third_topic: topic} when index == 2 -> topic
+      %{fourth_topic: topic} when index == 3 -> topic
+      # eth_getLogs format
+      %{"topics" => topics} when is_list(topics) -> Enum.at(topics, index)
+      _ -> nil
+    end
+  end
+
+  defp get_log_data(log) do
+    case log do
+      %{data: data} when is_binary(data) -> data
+      %{"data" => data} when is_binary(data) -> data
+      _ -> nil
+    end
+  end
+
+  defp normalize_log(log) do
+    # Create a normalized structure for decoding
+    %{
+      first_topic: get_log_topic(log, 0),
+      second_topic: get_log_topic(log, 1),
+      third_topic: get_log_topic(log, 2),
+      fourth_topic: get_log_topic(log, 3),
+      data: get_log_data(log)
+    }
   end
 
   defp decode_event(:claim, log), do: decode_claim_rewards(log)
@@ -243,28 +279,40 @@ defmodule Indexer.Transform.Monad.StakingEvents do
   defp build_event_record(event_type, log, decoded) do
     block_number =
       case log do
+        # Block import format
         %{block_number: bn} when is_integer(bn) -> bn
+        # eth_getLogs format (hex string)
+        %{"blockNumber" => bn} when is_binary(bn) -> hex_to_integer(bn)
         _ -> nil
       end
 
     log_index =
       case log do
+        # Block import format
         %{index: idx} when is_integer(idx) -> idx
         %{log_index: idx} when is_integer(idx) -> idx
+        # eth_getLogs format (hex string)
+        %{"logIndex" => idx} when is_binary(idx) -> hex_to_integer(idx)
         _ -> nil
       end
 
     transaction_hash =
       case log do
+        # Block import format
         %{transaction_hash: %Hash{} = hash} -> hash
         %{transaction_hash: hash} when is_binary(hash) -> hash
+        # eth_getLogs format
+        %{"transactionHash" => hash} when is_binary(hash) -> hash
         _ -> nil
       end
 
     block_hash =
       case log do
+        # Block import format
         %{block_hash: %Hash{} = hash} -> hash
         %{block_hash: hash} when is_binary(hash) -> hash
+        # eth_getLogs format
+        %{"blockHash" => hash} when is_binary(hash) -> hash
         _ -> nil
       end
 
@@ -292,4 +340,8 @@ defmodule Indexer.Transform.Monad.StakingEvents do
 
   defp maybe_add_field(map, _key, nil), do: map
   defp maybe_add_field(map, key, value), do: Map.put(map, key, value)
+
+  # Convert hex string to integer (handles "0x" prefix)
+  defp hex_to_integer("0x" <> hex), do: String.to_integer(hex, 16)
+  defp hex_to_integer(hex) when is_binary(hex), do: String.to_integer(hex, 16)
 end

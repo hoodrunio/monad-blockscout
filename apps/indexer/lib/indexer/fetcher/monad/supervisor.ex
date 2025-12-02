@@ -2,11 +2,14 @@ defmodule Indexer.Fetcher.Monad.Supervisor do
   @moduledoc """
   Supervisor for Monad-specific fetchers.
 
-  Currently manages:
+  Manages:
   - Validator fetcher: Periodically fetches validator data from the staking precompile
+  - StakingEventsCatchup: Backfills historical staking events and monitors for new ones
   """
 
   use Supervisor
+
+  alias Indexer.Fetcher.Monad.{StakingEventsCatchup, Validator}
 
   def child_spec(opts) do
     %{
@@ -24,10 +27,22 @@ defmodule Indexer.Fetcher.Monad.Supervisor do
   def init(opts) do
     json_rpc_named_arguments = Keyword.fetch!(opts, :json_rpc_named_arguments)
 
-    children = [
-      {Indexer.Fetcher.Monad.Validator, [json_rpc_named_arguments: json_rpc_named_arguments]}
-    ]
+    children =
+      [
+        {Validator, [json_rpc_named_arguments: json_rpc_named_arguments]},
+        catchup_child_spec(json_rpc_named_arguments)
+      ]
+      |> List.flatten()
+      |> Enum.reject(&is_nil/1)
 
     Supervisor.init(children, strategy: :one_for_one)
+  end
+
+  defp catchup_child_spec(json_rpc_named_arguments) do
+    if Application.get_env(:indexer, StakingEventsCatchup)[:enabled] do
+      {StakingEventsCatchup, [[json_rpc_named_arguments: json_rpc_named_arguments]]}
+    else
+      nil
+    end
   end
 end
