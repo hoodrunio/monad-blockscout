@@ -237,13 +237,30 @@ defmodule Indexer.Fetcher.OnDemand.Block do
     end
   end
 
+  @receipt_batch_size 25
+
   defp fetch_receipts([], _json_rpc_args), do: {:ok, %{logs: [], receipts: []}}
 
   defp fetch_receipts(transactions_params, json_rpc_args) do
-    # fetch_transaction_receipts expects full transaction params with :gas and :hash
-    case EthereumJSONRPC.fetch_transaction_receipts(transactions_params, json_rpc_args) do
-      {:ok, receipts_params} -> {:ok, receipts_params}
-      {:error, reason} -> {:error, reason}
+    # Batch receipts to avoid "Batch size too large" errors from RPC
+    transactions_params
+    |> Enum.chunk_every(@receipt_batch_size)
+    |> fetch_receipts_in_batches(json_rpc_args, %{logs: [], receipts: []})
+  end
+
+  defp fetch_receipts_in_batches([], _json_rpc_args, acc), do: {:ok, acc}
+
+  defp fetch_receipts_in_batches([batch | rest], json_rpc_args, acc) do
+    case EthereumJSONRPC.fetch_transaction_receipts(batch, json_rpc_args) do
+      {:ok, %{logs: logs, receipts: receipts}} ->
+        new_acc = %{
+          logs: acc.logs ++ logs,
+          receipts: acc.receipts ++ receipts
+        }
+        fetch_receipts_in_batches(rest, json_rpc_args, new_acc)
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
