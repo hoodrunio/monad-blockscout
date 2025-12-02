@@ -210,9 +210,8 @@ defmodule Indexer.Fetcher.OnDemand.Block do
   defp fetch_receipts([], _json_rpc_args), do: {:ok, %{logs: [], receipts: []}}
 
   defp fetch_receipts(transactions_params, json_rpc_args) do
-    transaction_hashes = Enum.map(transactions_params, & &1.hash)
-
-    case EthereumJSONRPC.fetch_transaction_receipts(transaction_hashes, json_rpc_args) do
+    # fetch_transaction_receipts expects full transaction params with :gas and :hash
+    case EthereumJSONRPC.fetch_transaction_receipts(transactions_params, json_rpc_args) do
       {:ok, receipts_params} -> {:ok, receipts_params}
       {:error, reason} -> {:error, reason}
     end
