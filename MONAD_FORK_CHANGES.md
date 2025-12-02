@@ -453,7 +453,140 @@ For questions about these modifications:
 
 ---
 
-Last Updated: 2025-11-14
+---
+
+## 🥩 Monad Staking Integration (2025-12-02)
+
+### Overview
+
+Full integration with Monad's staking precompile (`0x0000000000000000000000000000000000001000`) for tracking validators, delegations, and staking events.
+
+### API Endpoints
+
+#### Address Endpoints
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v2/addresses/:address_hash/monad/staking-events` | Staking events for an address |
+| GET | `/api/v2/addresses/:address_hash/monad/staking-stats` | Staking statistics for an address |
+
+#### Validator Endpoints
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v2/monad/validators` | List all validators |
+| GET | `/api/v2/monad/validators/stats` | Validator statistics |
+| GET | `/api/v2/monad/validators/:validator_id` | Single validator details |
+| GET | `/api/v2/monad/validators/:validator_id/staking-events` | Staking events for a validator |
+
+### Staking Event Types
+
+| Event | Signature | Description |
+|-------|-----------|-------------|
+| `Staked` | `0x1449c6dd...` | Delegation to validator |
+| `Unstaked` | `0x6733cde1...` | Undelegation from validator |
+| `WithdrawalRequested` | `0x8995b37e...` | Withdrawal request |
+| `Withdrawal` | `0x0edcbbda...` | Completed withdrawal |
+| `ValidatorReward` | `0x8f9ef6cc...` | Validator reward distribution |
+| `Claim` | `0xa232ce63...` | Claimed rewards |
+
+### New Files
+
+#### Database & Schema
+```
+apps/explorer/priv/monad/migrations/
+└── 20251202150000_create_monad_staking_tables.exs
+
+apps/explorer/lib/explorer/chain/monad/
+├── staking_event.ex      # StakingEvent schema
+├── validator.ex          # Validator schema
+├── contracts.ex          # Precompile addresses
+└── events.ex             # Event signatures
+```
+
+#### Import Runner
+```
+apps/explorer/lib/explorer/chain/import/runner/monad/
+└── staking_events.ex     # Import runner for staking events
+```
+
+#### Indexer/Fetcher
+```
+apps/indexer/lib/indexer/fetcher/monad/
+├── supervisor.ex              # Monad fetcher supervisor
+├── validator.ex               # Validator metadata fetcher
+└── staking_events_catchup.ex  # Historical events backfill
+
+apps/indexer/lib/indexer/transform/monad/
+└── staking_events.ex          # Log to event transform
+```
+
+#### API Controller & View
+```
+apps/block_scout_web/lib/block_scout_web/controllers/api/v2/
+└── monad_controller.ex        # API controller
+
+apps/block_scout_web/lib/block_scout_web/views/api/v2/
+└── monad_view.ex              # JSON views
+```
+
+### Modified Files
+
+| File | Change |
+|------|--------|
+| `apps/indexer/lib/indexer/supervisor.ex` | Added Monad supervisor to chain-specific fetchers |
+| `apps/indexer/lib/indexer/block/fetcher.ex` | Added staking event transform to block import |
+| `apps/explorer/lib/explorer/chain/import/stage/chain_type_specific.ex` | Added staking events runner |
+| `apps/block_scout_web/lib/block_scout_web/routers/api_router.ex` | Added Monad routes |
+| `config/runtime.exs` | Added Monad fetcher configuration |
+| `config/config_helper.exs` | Added `:monad` chain type |
+
+### Citus Distribution
+
+| Table | Type | Reason |
+|-------|------|--------|
+| `monad_validators` | Reference | Small table (~200 records), frequent JOINs |
+| `monad_staking_events` | Reference | Moderate size, FK to reference tables |
+
+**Note:** Foreign key to `transactions` table is NOT created because:
+- `monad_staking_events` would need different distribution column for FK
+- `block_hash` FK provides cascade delete for reorgs
+- Data integrity maintained at application level
+
+### Environment Variables
+
+```bash
+# Enable staking catchup (historical backfill)
+INDEXER_MONAD_STAKING_CATCHUP_ENABLED=false  # Set true to enable
+
+# Catchup configuration
+INDEXER_MONAD_STAKING_CATCHUP_START_BLOCK=1
+INDEXER_MONAD_STAKING_CATCHUP_BATCH_SIZE=1000
+INDEXER_MONAD_STAKING_CATCHUP_CHECK_INTERVAL=5000
+```
+
+### Precompile Contract
+
+**Address:** `0x0000000000000000000000000000000000001000`
+
+**Functions Used:**
+- `getValidatorMetadata(uint256 validatorId)` - Selector: `0x2b6d639a`
+
+**ValidatorMetadata Struct:**
+```solidity
+struct ValidatorMetadata {
+    address authAddress;      // Validator auth address
+    uint256 totalStake;       // Total staked amount
+    uint256 consensusStake;   // Consensus stake
+    uint32 commission;        // Commission rate (scaled by 1e6)
+    uint256 unclaimedRewards; // Pending rewards
+    uint32 flags;             // Status flags
+    bytes secpPubkey;         // SECP256k1 public key
+    bytes blsPubkey;          // BLS public key
+}
+```
+
+---
+
+Last Updated: 2025-12-02
 Maintained by: HoodRun
 Blockscout Base Version: 9.2.2
 Citus Version: 13+

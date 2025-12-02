@@ -200,7 +200,7 @@ defmodule Indexer.Fetcher.Monad.Validator do
   defp parse_validator_data(_validator_id, _data), do: nil
 
   defp get_current_block_number do
-    case Explorer.Chain.Block.get_max_block_number() do
+    case Explorer.Chain.fetch_max_block_number() do
       {:ok, number} -> number
       _ -> 0
     end
