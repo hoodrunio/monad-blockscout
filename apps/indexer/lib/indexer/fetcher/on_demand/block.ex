@@ -238,9 +238,9 @@ defmodule Indexer.Fetcher.OnDemand.Block do
     end
   end
 
-  # Use smaller batch size for on-demand fetching to avoid RPC "Batch size too large" errors
-  @receipts_batch_size 25
-  @receipts_concurrency 4
+  # Use very small batch size for Monad RPC
+  @receipts_batch_size 5
+  @receipts_concurrency 3
 
   defp fetch_receipts(transactions_params, json_rpc_args) do
     # Create a Block.Fetcher struct with custom batch size for on-demand fetching
