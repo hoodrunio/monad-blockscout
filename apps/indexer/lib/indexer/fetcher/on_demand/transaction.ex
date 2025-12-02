@@ -7,6 +7,8 @@ defmodule Indexer.Fetcher.OnDemand.Transaction do
   1. Use eth_getTransactionByHash to get block_number
   2. Call OnDemand.Block.fetch_by_number() to fetch and index the entire block
   3. Return the transaction from the database
+
+  Uses the same archive RPC configuration as OnDemand.Block with round-robin load balancing.
   """
 
   require Logger
@@ -57,46 +59,57 @@ defmodule Indexer.Fetcher.OnDemand.Transaction do
 
   @impl true
   def init(json_rpc_named_arguments) do
-    {:ok, %{json_rpc_named_arguments: json_rpc_named_arguments}}
+    archive_urls = parse_archive_urls()
+
+    {:ok,
+     %{
+       json_rpc_named_arguments: json_rpc_named_arguments,
+       archive_urls: archive_urls,
+       current_index: 0
+     }}
   end
 
   @impl true
   def handle_call({:fetch_by_hash, hash}, _from, state) do
-    result = do_fetch_by_hash(hash, state)
-    {:reply, result, state}
+    {result, new_state} = do_fetch_by_hash(hash, state)
+    {:reply, result, new_state}
   end
 
   # Private implementation
 
   defp do_fetch_by_hash(hash, state) do
-    with {:ok, block_number} <- get_transaction_block_number(hash, state),
-         # Fetch the entire block (which includes all transactions)
-         {:ok, _block} <- BlockOnDemand.fetch_by_number(nil, block_number),
-         # Now the transaction should be in the database
-         {:ok, transaction} <-
-           Chain.hash_to_transaction(
-             hash,
-             necessity_by_association: @transaction_necessity_by_association,
-             api?: true
-           ) do
-      {:ok, transaction}
-    else
-      {:error, :pending_transaction} ->
-        Logger.debug("OnDemand.Transaction: Transaction #{hash} is pending")
-        {:error, :pending_transaction}
+    {json_rpc_args, new_state} = get_next_json_rpc_args(state)
 
-      {:error, :not_found} ->
-        {:error, :not_found}
+    result =
+      with {:ok, block_number} <- get_transaction_block_number(hash, json_rpc_args),
+           # Fetch the entire block (which includes all transactions)
+           {:ok, _block} <- BlockOnDemand.fetch_by_number(nil, block_number),
+           # Now the transaction should be in the database
+           {:ok, transaction} <-
+             Chain.hash_to_transaction(
+               hash,
+               necessity_by_association: @transaction_necessity_by_association,
+               api?: true
+             ) do
+        {:ok, transaction}
+      else
+        {:error, :pending_transaction} ->
+          Logger.debug("OnDemand.Transaction: Transaction #{hash} is pending")
+          {:error, :pending_transaction}
 
-      {:error, reason} ->
-        Logger.warning("OnDemand.Transaction fetch_by_hash failed: #{inspect(reason)}")
-        {:error, reason}
-    end
+        {:error, :not_found} ->
+          {:error, :not_found}
+
+        {:error, reason} ->
+          Logger.warning("OnDemand.Transaction fetch_by_hash failed: #{inspect(reason)}")
+          {:error, reason}
+      end
+
+    {result, new_state}
   end
 
-  defp get_transaction_block_number(hash, state) do
+  defp get_transaction_block_number(hash, json_rpc_args) do
     hash_string = to_string(hash)
-    json_rpc_args = get_json_rpc_args(state)
 
     request = %{
       id: 0,
@@ -124,21 +137,34 @@ defmodule Indexer.Fetcher.OnDemand.Transaction do
     end
   end
 
-  defp get_json_rpc_args(state) do
+  # Parse comma-separated archive URLs from Block config (shared with OnDemand.Block)
+  defp parse_archive_urls do
     config = Application.get_env(:indexer, BlockOnDemand, [])
-    archive_url = config[:archive_json_rpc_url]
-    archive_fallback_url = config[:archive_fallback_json_rpc_url]
+    urls_string = config[:archive_json_rpc_urls] || ""
 
-    cond do
-      archive_url && archive_url != "" ->
-        build_json_rpc_args(archive_url)
+    urls_string
+    |> String.split(",")
+    |> Enum.map(&String.trim/1)
+    |> Enum.filter(&(&1 != ""))
+  end
 
-      archive_fallback_url && archive_fallback_url != "" ->
-        build_json_rpc_args(archive_fallback_url)
+  # Round-robin URL selection
+  defp get_next_json_rpc_args(%{archive_urls: [], json_rpc_named_arguments: default_args} = state) do
+    # No archive URLs configured, use default RPC
+    {default_args, state}
+  end
 
-      true ->
-        state.json_rpc_named_arguments
-    end
+  defp get_next_json_rpc_args(%{archive_urls: urls, current_index: index} = state) do
+    # Round-robin through archive URLs
+    url = Enum.at(urls, index)
+    next_index = rem(index + 1, length(urls))
+
+    json_rpc_args = build_json_rpc_args(url)
+    new_state = %{state | current_index: next_index}
+
+    Logger.debug("OnDemand.Transaction using archive RPC: #{url} (index: #{index}/#{length(urls)})")
+
+    {json_rpc_args, new_state}
   end
 
   defp build_json_rpc_args(url) do
@@ -146,7 +172,7 @@ defmodule Indexer.Fetcher.OnDemand.Transaction do
       transport: EthereumJSONRPC.HTTP,
       transport_options: [
         http: EthereumJSONRPC.HTTP.HTTPoison,
-        url: url,
+        urls: [url],
         http_options: [recv_timeout: timeout(), timeout: timeout()]
       ]
     ]
