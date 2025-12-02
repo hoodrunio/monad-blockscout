@@ -238,16 +238,18 @@ defmodule Indexer.Fetcher.OnDemand.Block do
     end
   end
 
-  # Use very small batch size for Monad RPC
-  @receipts_batch_size 5
-  @receipts_concurrency 3
+  # Default values - can be overridden via ON_DEMAND_RECEIPTS_BATCH_SIZE / ON_DEMAND_RECEIPTS_CONCURRENCY
+  @default_receipts_batch_size 5
+  @default_receipts_concurrency 3
 
   defp fetch_receipts(transactions_params, json_rpc_args) do
-    # Create a Block.Fetcher struct with custom batch size for on-demand fetching
+    config = Application.get_env(:indexer, __MODULE__, [])
+
+    # Create a Block.Fetcher struct with configurable batch size
     fetcher = %BlockFetcher{
       json_rpc_named_arguments: json_rpc_args,
-      receipts_batch_size: @receipts_batch_size,
-      receipts_concurrency: @receipts_concurrency
+      receipts_batch_size: config[:receipts_batch_size] || @default_receipts_batch_size,
+      receipts_concurrency: config[:receipts_concurrency] || @default_receipts_concurrency
     }
 
     # Use the same receipt fetching logic as the main indexer

@@ -1025,7 +1025,10 @@ config :indexer, Indexer.Fetcher.OnDemand.ContractCode,
 config :indexer, Indexer.Fetcher.OnDemand.Block,
   timeout: ConfigHelper.parse_time_env_var("ON_DEMAND_BLOCK_FETCH_TIMEOUT", "30s"),
   # Comma-separated list of archive RPC URLs for round-robin load balancing
-  archive_json_rpc_urls: System.get_env("ON_DEMAND_ARCHIVE_JSON_RPC_URLS", "")
+  archive_json_rpc_urls: System.get_env("ON_DEMAND_ARCHIVE_JSON_RPC_URLS", ""),
+  # Receipt fetching batch size and concurrency (for RPC batch limits)
+  receipts_batch_size: ConfigHelper.parse_integer_env_var("ON_DEMAND_RECEIPTS_BATCH_SIZE", 5),
+  receipts_concurrency: ConfigHelper.parse_integer_env_var("ON_DEMAND_RECEIPTS_CONCURRENCY", 3)
 
 config :indexer, Indexer.Fetcher.OnDemand.Block.Supervisor,
   disabled?: ConfigHelper.parse_bool_env_var("ON_DEMAND_BLOCK_FETCH_DISABLED")
