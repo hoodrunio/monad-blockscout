@@ -67,9 +67,18 @@ defmodule Indexer.Fetcher.Monad.Validator do
     {:noreply, state}
   end
 
-  # Catch-all for unexpected messages (e.g., task responses, monitor messages)
+  # Handle Task.async responses from Chain.import -> Notify.async
+  # When Task completes, it sends {ref, result} to the caller
   @impl GenServer
-  def handle_info(_msg, state) do
+  def handle_info({ref, _result}, state) when is_reference(ref) do
+    # Demonitor and flush to avoid :DOWN message
+    Process.demonitor(ref, [:flush])
+    {:noreply, state}
+  end
+
+  # Handle DOWN messages if task crashes
+  @impl GenServer
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state) do
     {:noreply, state}
   end
 
