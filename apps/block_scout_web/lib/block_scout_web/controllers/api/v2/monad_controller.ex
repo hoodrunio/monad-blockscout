@@ -32,7 +32,7 @@ defmodule BlockScoutWeb.API.V2.MonadController do
   Returns staking events for a given address with pagination.
   """
   @spec staking_events(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def staking_events(conn, %{"address_hash" => address_hash_string} = params) do
+  def staking_events(conn, %{"address_hash_param" => address_hash_string} = params) do
     with {:ok, address_hash} <- Hash.Address.cast(address_hash_string) do
       options =
         @api_true
@@ -72,7 +72,7 @@ defmodule BlockScoutWeb.API.V2.MonadController do
   Returns aggregated staking statistics for an address.
   """
   @spec staking_stats(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def staking_stats(conn, %{"address_hash" => address_hash_string}) do
+  def staking_stats(conn, %{"address_hash_param" => address_hash_string}) do
     with {:ok, address_hash} <- Hash.Address.cast(address_hash_string) do
       total_rewards_claimed = StakingEvent.aggregate_rewards_by_address(address_hash, @api_true)
       total_delegated = StakingEvent.aggregate_delegations_by_address(address_hash, @api_true)
