@@ -81,17 +81,27 @@ defmodule Explorer.Chain.Monad.Validator do
   # Query Helpers
 
   @doc """
-  Fetches all validators ordered by validator_id.
+  Fetches all validators ordered by validator_id with pagination support.
   """
   @spec get_all(keyword()) :: [t()]
   def get_all(options \\ []) do
     necessity_by_association = Keyword.get(options, :necessity_by_association, %{})
+    paging_options = Keyword.get(options, :paging_options, Explorer.PagingOptions.default_paging_options())
 
     __MODULE__
     |> order_by([v], asc: v.validator_id)
+    |> page_validators(paging_options)
     |> Chain.join_associations(necessity_by_association)
     |> Chain.select_repo(options).all()
   end
+
+  defp page_validators(query, %Explorer.PagingOptions{key: nil}), do: query
+
+  defp page_validators(query, %Explorer.PagingOptions{key: %{validator_id: validator_id}}) do
+    where(query, [v], v.validator_id > ^validator_id)
+  end
+
+  defp page_validators(query, _), do: query
 
   @doc """
   Fetches a validator by ID.
