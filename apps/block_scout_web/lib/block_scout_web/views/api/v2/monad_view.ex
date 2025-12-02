@@ -70,7 +70,7 @@ defmodule BlockScoutWeb.API.V2.MonadView do
     %{
       total_validators: total_validators,
       active_validators: active_validators,
-      total_stake: to_string(total_stake)
+      total_stake: wei_to_string(total_stake)
     }
   end
 
@@ -125,6 +125,8 @@ defmodule BlockScoutWeb.API.V2.MonadView do
 
   defp wei_to_string(nil), do: nil
   defp wei_to_string(%Explorer.Chain.Wei{value: value}), do: to_string(value)
+  defp wei_to_string(%Decimal{} = value), do: to_string(value)
+  defp wei_to_string(value) when is_integer(value), do: to_string(value)
 
   defp block_timestamp(%{block: %{timestamp: timestamp}}) when not is_nil(timestamp) do
     DateTime.to_iso8601(timestamp)
