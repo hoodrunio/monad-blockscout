@@ -1024,8 +1024,8 @@ config :indexer, Indexer.Fetcher.OnDemand.ContractCode,
 
 config :indexer, Indexer.Fetcher.OnDemand.Block,
   timeout: ConfigHelper.parse_time_env_var("ON_DEMAND_BLOCK_FETCH_TIMEOUT", "30s"),
-  archive_json_rpc_url: System.get_env("ON_DEMAND_ARCHIVE_JSON_RPC_URL"),
-  archive_fallback_json_rpc_url: System.get_env("ON_DEMAND_ARCHIVE_FALLBACK_JSON_RPC_URL")
+  # Comma-separated list of archive RPC URLs for round-robin load balancing
+  archive_json_rpc_urls: System.get_env("ON_DEMAND_ARCHIVE_JSON_RPC_URLS", "")
 
 config :indexer, Indexer.Fetcher.OnDemand.Block.Supervisor,
   disabled?: ConfigHelper.parse_bool_env_var("ON_DEMAND_BLOCK_FETCH_DISABLED")

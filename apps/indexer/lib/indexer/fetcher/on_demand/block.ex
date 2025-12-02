@@ -3,11 +3,9 @@ defmodule Indexer.Fetcher.OnDemand.Block do
   Fetches a block on-demand when requested via API and not found in database.
   Performs full indexing including transactions, receipts, logs, and token transfers.
 
-  Supports archive RPC fallback:
-  1. ON_DEMAND_ARCHIVE_JSON_RPC_URL (if set)
-  2. ON_DEMAND_ARCHIVE_FALLBACK_JSON_RPC_URL (if set)
-  3. Primary JSON RPC (ETHEREUM_JSONRPC_HTTP_URL)
-  4. Fallback JSON RPC (ETHEREUM_JSONRPC_FALLBACK_HTTP_URL)
+  Supports multiple archive RPCs with round-robin load balancing:
+  - ON_DEMAND_ARCHIVE_JSON_RPC_URLS: Comma-separated list of archive RPC URLs
+  - Falls back to primary JSON RPC if no archive URLs configured
   """
 
   require Logger
@@ -82,57 +80,73 @@ defmodule Indexer.Fetcher.OnDemand.Block do
 
   @impl true
   def init(json_rpc_named_arguments) do
-    {:ok, %{json_rpc_named_arguments: json_rpc_named_arguments}}
+    archive_urls = parse_archive_urls()
+
+    {:ok,
+     %{
+       json_rpc_named_arguments: json_rpc_named_arguments,
+       archive_urls: archive_urls,
+       current_index: 0
+     }}
   end
 
   @impl true
   def handle_call({:fetch_by_hash, hash}, _from, state) do
-    result = do_fetch_by_hash(hash, state)
-    {:reply, result, state}
+    {result, new_state} = do_fetch_by_hash(hash, state)
+    {:reply, result, new_state}
   end
 
   @impl true
   def handle_call({:fetch_by_number, number}, _from, state) do
-    result = do_fetch_by_number(number, state)
-    {:reply, result, state}
+    {result, new_state} = do_fetch_by_number(number, state)
+    {:reply, result, new_state}
   end
 
   # Private implementation
 
   defp do_fetch_by_hash(hash, state) do
     hash_string = to_string(hash)
+    {json_rpc_args, new_state} = get_next_json_rpc_args(state)
 
-    with {:ok, json_rpc_args} <- get_json_rpc_args_with_fallback(state),
-         {:ok, %Blocks{} = blocks_data} <-
-           EthereumJSONRPC.fetch_blocks_by_hash([hash_string], json_rpc_args, true),
-         {:ok, _imported} <- import_block_data(blocks_data, json_rpc_args),
-         {:ok, block} <- Chain.hash_to_block(hash, necessity_by_association: @block_necessity_by_association, api?: true) do
-      {:ok, block}
-    else
-      {:error, :empty_response} ->
-        {:error, :not_found}
+    result =
+      with {:ok, %Blocks{} = blocks_data} <-
+             EthereumJSONRPC.fetch_blocks_by_hash([hash_string], json_rpc_args, true),
+           {:ok, _imported} <- import_block_data(blocks_data, json_rpc_args),
+           {:ok, block} <-
+             Chain.hash_to_block(hash, necessity_by_association: @block_necessity_by_association, api?: true) do
+        {:ok, block}
+      else
+        {:error, :empty_response} ->
+          {:error, :not_found}
 
-      {:error, reason} ->
-        Logger.warning("OnDemand.Block fetch_by_hash failed: #{inspect(reason)}")
-        {:error, reason}
-    end
+        {:error, reason} ->
+          Logger.warning("OnDemand.Block fetch_by_hash failed: #{inspect(reason)}")
+          {:error, reason}
+      end
+
+    {result, new_state}
   end
 
   defp do_fetch_by_number(number, state) do
-    with {:ok, json_rpc_args} <- get_json_rpc_args_with_fallback(state),
-         {:ok, %Blocks{} = blocks_data} <-
-           EthereumJSONRPC.fetch_blocks_by_numbers([number], json_rpc_args, true),
-         {:ok, _imported} <- import_block_data(blocks_data, json_rpc_args),
-         {:ok, block} <- Chain.number_to_block(number, necessity_by_association: @block_necessity_by_association, api?: true) do
-      {:ok, block}
-    else
-      {:error, :empty_response} ->
-        {:error, :not_found}
+    {json_rpc_args, new_state} = get_next_json_rpc_args(state)
 
-      {:error, reason} ->
-        Logger.warning("OnDemand.Block fetch_by_number failed: #{inspect(reason)}")
-        {:error, reason}
-    end
+    result =
+      with {:ok, %Blocks{} = blocks_data} <-
+             EthereumJSONRPC.fetch_blocks_by_numbers([number], json_rpc_args, true),
+           {:ok, _imported} <- import_block_data(blocks_data, json_rpc_args),
+           {:ok, block} <-
+             Chain.number_to_block(number, necessity_by_association: @block_necessity_by_association, api?: true) do
+        {:ok, block}
+      else
+        {:error, :empty_response} ->
+          {:error, :not_found}
+
+        {:error, reason} ->
+          Logger.warning("OnDemand.Block fetch_by_number failed: #{inspect(reason)}")
+          {:error, reason}
+      end
+
+    {result, new_state}
   end
 
   defp import_block_data(
@@ -201,27 +215,34 @@ defmodule Indexer.Fetcher.OnDemand.Block do
     end
   end
 
-  # Archive RPC fallback logic
-  defp get_json_rpc_args_with_fallback(state) do
+  # Parse comma-separated archive URLs from config
+  defp parse_archive_urls do
     config = Application.get_env(:indexer, __MODULE__, [])
-    archive_url = config[:archive_json_rpc_url]
-    archive_fallback_url = config[:archive_fallback_json_rpc_url]
+    urls_string = config[:archive_json_rpc_urls] || ""
 
-    cond do
-      archive_url && archive_url != "" ->
-        # Try archive RPC first
-        archive_args = build_json_rpc_args(archive_url)
-        {:ok, archive_args}
+    urls_string
+    |> String.split(",")
+    |> Enum.map(&String.trim/1)
+    |> Enum.filter(&(&1 != ""))
+  end
 
-      archive_fallback_url && archive_fallback_url != "" ->
-        # Try archive fallback
-        fallback_args = build_json_rpc_args(archive_fallback_url)
-        {:ok, fallback_args}
+  # Round-robin URL selection
+  defp get_next_json_rpc_args(%{archive_urls: [], json_rpc_named_arguments: default_args} = state) do
+    # No archive URLs configured, use default RPC
+    {default_args, state}
+  end
 
-      true ->
-        # Use default RPC from state
-        {:ok, state.json_rpc_named_arguments}
-    end
+  defp get_next_json_rpc_args(%{archive_urls: urls, current_index: index} = state) do
+    # Round-robin through archive URLs
+    url = Enum.at(urls, index)
+    next_index = rem(index + 1, length(urls))
+
+    json_rpc_args = build_json_rpc_args(url)
+    new_state = %{state | current_index: next_index}
+
+    Logger.debug("OnDemand.Block using archive RPC: #{url} (index: #{index}/#{length(urls)})")
+
+    {json_rpc_args, new_state}
   end
 
   defp build_json_rpc_args(url) do
