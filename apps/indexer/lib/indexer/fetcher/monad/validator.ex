@@ -152,39 +152,70 @@ defmodule Indexer.Fetcher.Monad.Validator do
 
   defp parse_validator_data(validator_id, "0x" <> hex_data) do
     case Base.decode16(hex_data, case: :mixed) do
-      {:ok, data} when byte_size(data) >= 256 ->
-        # ValidatorMetadata struct layout:
-        # - authAddress: address (20 bytes, padded to 32)
-        # - totalStake: uint256
-        # - consensusStake: uint256
-        # - commission: uint256
-        # - unclaimedRewards: uint256
-        # - flags: uint64 (padded to 32)
-        # - secpPubkey: bytes (offset pointer)
-        # - blsPubkey: bytes (offset pointer)
+      {:ok, data} when byte_size(data) >= 384 ->
+        # getValidator return struct (from Monad docs):
+        # Slot 0:  address authAddress        (20 bytes, left-padded to 32)
+        # Slot 1:  uint64 flags               (8 bytes, left-padded to 32)
+        # Slot 2:  uint256 stake              (execution stake)
+        # Slot 3:  uint256 accRewardPerToken  (accumulator)
+        # Slot 4:  uint256 commission         (execution commission, 1e18 scale)
+        # Slot 5:  uint256 unclaimedRewards
+        # Slot 6:  uint256 consensusStake
+        # Slot 7:  uint256 consensusCommission
+        # Slot 8:  uint256 snapshotStake
+        # Slot 9:  uint256 snapshotCommission
+        # Slot 10: bytes secpPubkey offset
+        # Slot 11: bytes blsPubkey offset
+        # ... dynamic data follows
         <<
-          _padding1::binary-size(12),
+          # Slot 0: authAddress
+          _padding_addr::binary-size(12),
           auth_address::binary-size(20),
-          total_stake::unsigned-big-integer-size(256),
-          consensus_stake::unsigned-big-integer-size(256),
+          # Slot 1: flags (uint64 padded to 32 bytes)
+          _padding_flags::binary-size(24),
+          flags::unsigned-big-integer-size(64),
+          # Slot 2: stake (execution)
+          stake::unsigned-big-integer-size(256),
+          # Slot 3: accRewardPerToken (we don't store this)
+          _acc_reward_per_token::unsigned-big-integer-size(256),
+          # Slot 4: commission (execution)
           commission::unsigned-big-integer-size(256),
+          # Slot 5: unclaimedRewards
           unclaimed_rewards::unsigned-big-integer-size(256),
-          flags::unsigned-big-integer-size(256),
+          # Slot 6: consensusStake
+          consensus_stake::unsigned-big-integer-size(256),
+          # Slot 7: consensusCommission (we use execution commission)
+          _consensus_commission::unsigned-big-integer-size(256),
+          # Slot 8: snapshotStake (we don't store this)
+          _snapshot_stake::unsigned-big-integer-size(256),
+          # Slot 9: snapshotCommission (we don't store this)
+          _snapshot_commission::unsigned-big-integer-size(256),
+          # Slot 10: secpPubkey offset (relative to start of return data)
+          secp_offset::unsigned-big-integer-size(256),
+          # Slot 11: blsPubkey offset
+          bls_offset::unsigned-big-integer-size(256),
+          # Rest: dynamic data (pubkeys)
           _rest::binary
         >> = data
 
-        # Only return validator if it has non-zero stake or is active
-        if total_stake > 0 or flags > 0 do
+        # Parse dynamic bytes fields (secpPubkey and blsPubkey)
+        secp_pubkey = parse_dynamic_bytes(data, secp_offset)
+        bls_pubkey = parse_dynamic_bytes(data, bls_offset)
+
+        # Only return validator if it has non-zero stake or is registered (flags or any stake)
+        if stake > 0 or consensus_stake > 0 or flags > 0 do
           {:ok, auth_hash} = Hash.Address.cast(auth_address)
 
           %{
             validator_id: validator_id,
             auth_address_hash: auth_hash,
-            total_stake: total_stake,
+            total_stake: stake,
             consensus_stake: consensus_stake,
             commission: commission,
             unclaimed_rewards: unclaimed_rewards,
             flags: flags,
+            secp_pubkey: secp_pubkey,
+            bls_pubkey: bls_pubkey,
             updated_at_block: get_current_block_number()
           }
         else
@@ -196,6 +227,30 @@ defmodule Indexer.Fetcher.Monad.Validator do
         nil
     end
   end
+
+  # Parse dynamic bytes from ABI-encoded data
+  # offset is the byte offset from the start of the data where the bytes field is located
+  # Layout at offset: [32 bytes length][length bytes data]
+  defp parse_dynamic_bytes(data, offset) when is_integer(offset) and offset >= 0 do
+    data_size = byte_size(data)
+
+    # Ensure we have enough data to read the length
+    if offset + 32 <= data_size do
+      <<_skip::binary-size(offset), length::unsigned-big-integer-size(256), rest::binary>> = data
+
+      # Ensure we have enough data to read the actual bytes
+      if length > 0 and byte_size(rest) >= length do
+        <<bytes_data::binary-size(length), _::binary>> = rest
+        bytes_data
+      else
+        nil
+      end
+    else
+      nil
+    end
+  end
+
+  defp parse_dynamic_bytes(_data, _offset), do: nil
 
   defp parse_validator_data(_validator_id, _data), do: nil
 
