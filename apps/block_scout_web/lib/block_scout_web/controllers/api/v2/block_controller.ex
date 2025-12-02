@@ -176,8 +176,16 @@ defmodule BlockScoutWeb.API.V2.BlockController do
       {:ok, _block} = ok_response ->
         ok_response
 
-      _ ->
-        {:lost_consensus, Chain.nonconsensus_block_by_number(number, @api_true)}
+      {:error, :not_found} ->
+        # Check if block exists but lost consensus
+        case Chain.nonconsensus_block_by_number(number, @api_true) do
+          {:ok, _block} = lost_consensus_block ->
+            {:lost_consensus, lost_consensus_block}
+
+          {:error, :not_found} ->
+            # Block doesn't exist at all - allow on-demand fetch
+            {:error, :not_found}
+        end
     end
   end
 

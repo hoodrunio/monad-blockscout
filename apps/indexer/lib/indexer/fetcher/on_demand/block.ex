@@ -106,9 +106,9 @@ defmodule Indexer.Fetcher.OnDemand.Block do
 
   defp do_fetch_by_hash(hash, state) do
     hash_string = to_string(hash)
-    {json_rpc_args, new_state} = get_next_json_rpc_args(state)
+    max_attempts = max_rpc_attempts(state)
 
-    result =
+    {result, new_state} = try_fetch_with_retries(state, max_attempts, fn json_rpc_args ->
       with {:ok, %Blocks{} = blocks_data} <-
              EthereumJSONRPC.fetch_blocks_by_hash([hash_string], json_rpc_args, true),
            {:ok, _imported} <- import_block_data(blocks_data, json_rpc_args),
@@ -117,20 +117,22 @@ defmodule Indexer.Fetcher.OnDemand.Block do
         {:ok, block}
       else
         {:error, :empty_response} ->
-          {:error, :not_found}
+          # Block doesn't exist on this RPC - don't retry, it won't exist on others
+          {:error, :not_found, :no_retry}
 
         {:error, reason} ->
           Logger.warning("OnDemand.Block fetch_by_hash failed: #{inspect(reason)}")
           {:error, reason}
       end
+    end)
 
     {result, new_state}
   end
 
   defp do_fetch_by_number(number, state) do
-    {json_rpc_args, new_state} = get_next_json_rpc_args(state)
+    max_attempts = max_rpc_attempts(state)
 
-    result =
+    {result, new_state} = try_fetch_with_retries(state, max_attempts, fn json_rpc_args ->
       with {:ok, %Blocks{} = blocks_data} <-
              EthereumJSONRPC.fetch_blocks_by_numbers([number], json_rpc_args, true),
            {:ok, _imported} <- import_block_data(blocks_data, json_rpc_args),
@@ -139,15 +141,43 @@ defmodule Indexer.Fetcher.OnDemand.Block do
         {:ok, block}
       else
         {:error, :empty_response} ->
-          {:error, :not_found}
+          # Block doesn't exist on this RPC - don't retry, it won't exist on others
+          {:error, :not_found, :no_retry}
 
         {:error, reason} ->
           Logger.warning("OnDemand.Block fetch_by_number failed: #{inspect(reason)}")
           {:error, reason}
       end
+    end)
 
     {result, new_state}
   end
+
+  # Retry logic: try all RPCs before giving up
+  defp try_fetch_with_retries(state, 0, _fetch_fn) do
+    {{:error, :all_rpcs_failed}, state}
+  end
+
+  defp try_fetch_with_retries(state, attempts_left, fetch_fn) do
+    {json_rpc_args, new_state} = get_next_json_rpc_args(state)
+
+    case fetch_fn.(json_rpc_args) do
+      {:ok, _} = success ->
+        {success, new_state}
+
+      {:error, _reason, :no_retry} ->
+        # Don't retry - the data doesn't exist
+        {{:error, :not_found}, new_state}
+
+      {:error, reason} ->
+        Logger.warning("OnDemand.Block RPC failed, #{attempts_left - 1} attempts remaining: #{inspect(reason)}")
+        try_fetch_with_retries(new_state, attempts_left - 1, fetch_fn)
+    end
+  end
+
+  # Max attempts = number of archive URLs (or 1 if using default RPC)
+  defp max_rpc_attempts(%{archive_urls: []}), do: 1
+  defp max_rpc_attempts(%{archive_urls: urls}), do: length(urls)
 
   defp import_block_data(
          %Blocks{

@@ -78,35 +78,64 @@ defmodule Indexer.Fetcher.OnDemand.Transaction do
   # Private implementation
 
   defp do_fetch_by_hash(hash, state) do
-    {json_rpc_args, new_state} = get_next_json_rpc_args(state)
+    max_attempts = max_rpc_attempts(state)
 
-    result =
-      with {:ok, block_number} <- get_transaction_block_number(hash, json_rpc_args),
+    {result, new_state} = try_fetch_with_retries(state, max_attempts, hash, fn json_rpc_args, tx_hash ->
+      with {:ok, block_number} <- get_transaction_block_number(tx_hash, json_rpc_args),
            # Fetch the entire block (which includes all transactions)
+           # BlockOnDemand has its own retry logic
            {:ok, _block} <- BlockOnDemand.fetch_by_number(nil, block_number),
            # Now the transaction should be in the database
            {:ok, transaction} <-
              Chain.hash_to_transaction(
-               hash,
+               tx_hash,
                necessity_by_association: @transaction_necessity_by_association,
                api?: true
              ) do
         {:ok, transaction}
       else
         {:error, :pending_transaction} ->
-          Logger.debug("OnDemand.Transaction: Transaction #{hash} is pending")
-          {:error, :pending_transaction}
+          Logger.debug("OnDemand.Transaction: Transaction #{tx_hash} is pending")
+          {:error, :pending_transaction, :no_retry}
 
         {:error, :not_found} ->
-          {:error, :not_found}
+          # Transaction not found on this RPC - don't retry
+          {:error, :not_found, :no_retry}
 
         {:error, reason} ->
           Logger.warning("OnDemand.Transaction fetch_by_hash failed: #{inspect(reason)}")
           {:error, reason}
       end
+    end)
 
     {result, new_state}
   end
+
+  # Retry logic: try all RPCs before giving up
+  defp try_fetch_with_retries(state, 0, _hash, _fetch_fn) do
+    {{:error, :all_rpcs_failed}, state}
+  end
+
+  defp try_fetch_with_retries(state, attempts_left, hash, fetch_fn) do
+    {json_rpc_args, new_state} = get_next_json_rpc_args(state)
+
+    case fetch_fn.(json_rpc_args, hash) do
+      {:ok, _} = success ->
+        {success, new_state}
+
+      {:error, reason, :no_retry} ->
+        # Don't retry - transaction doesn't exist or is pending
+        {{:error, reason}, new_state}
+
+      {:error, reason} ->
+        Logger.warning("OnDemand.Transaction RPC failed, #{attempts_left - 1} attempts remaining: #{inspect(reason)}")
+        try_fetch_with_retries(new_state, attempts_left - 1, hash, fetch_fn)
+    end
+  end
+
+  # Max attempts = number of archive URLs (or 1 if using default RPC)
+  defp max_rpc_attempts(%{archive_urls: []}), do: 1
+  defp max_rpc_attempts(%{archive_urls: urls}), do: length(urls)
 
   defp get_transaction_block_number(hash, json_rpc_args) do
     hash_string = to_string(hash)
