@@ -81,7 +81,8 @@ defmodule BlockScoutWeb.Endpoint do
 
     # 'x-apollo-tracing' header for https://www.graphqlbin.com to work with our GraphQL endpoint
     # 'updated-gas-oracle' header for /api/v2/stats endpoint, added to support cross-origin requests (e.g. multichain search explorer)
-    plug(CORSPlug,
+    # CORS origin can be configured via API_V2_CORS_ALLOWED_ORIGIN env var (supports comma-separated multiple origins)
+    plug(BlockScoutWeb.Plugs.DynamicCORS,
       headers:
         [
           "x-apollo-tracing",

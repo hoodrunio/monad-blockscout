@@ -68,19 +68,19 @@ defmodule Explorer.Chain.Import.Runner.Logs do
     on_conflict = Map.get_lazy(options, :on_conflict, &default_on_conflict/0)
 
     # Enforce Log ShareLocks order (see docs: sharelocks.md)
-    {ordered_changes_list, conflict_target} =
-      case chain_identity() do
-        {:optimism, :celo} ->
-          {
-            Enum.sort_by(changes_list, &{&1.block_hash, &1.index}),
-            [:index, :block_hash]
-          }
+    ordered_changes_list =
+      case Application.get_env(:explorer, :chain_type) do
+        :celo -> Enum.sort_by(changes_list, &{&1.block_hash, &1.index})
+        _ -> Enum.sort_by(changes_list, &{&1.transaction_hash, &1.block_hash, &1.index})
+      end
 
-        _ ->
-          {
-            Enum.sort_by(changes_list, &{&1.transaction_hash, &1.block_hash, &1.index}),
-            [:transaction_hash, :index, :block_hash]
-          }
+    # Modified for Citus distributed table support
+    # Using PRIMARY KEY columns for conflict resolution
+    # logs table PK: (transaction_hash, index) - migration 20181024164623
+    conflict_target =
+      case Application.get_env(:explorer, :chain_type) do
+        :celo -> [:index, :block_hash]  # Celo unchanged
+        _ -> [:transaction_hash, :index]  # Monad: matches Citus PRIMARY KEY (transaction_hash, index)
       end
 
     {:ok, _} =

@@ -921,6 +921,13 @@ config :explorer, Explorer.Utility.RateLimiter,
     max_ban_interval: ConfigHelper.parse_time_env_var("RATE_LIMITER_ON_DEMAND_MAX_BAN_INTERVAL", "1h"),
     limitation_period: ConfigHelper.parse_time_env_var("RATE_LIMITER_ON_DEMAND_LIMITATION_PERIOD", "1h")
   ],
+  on_demand_block_fetch: [
+    time_interval_limit: ConfigHelper.parse_time_env_var("RATE_LIMITER_ON_DEMAND_BLOCK_FETCH_TIME_INTERVAL", "1m"),
+    limit_by_ip: ConfigHelper.parse_integer_env_var("RATE_LIMITER_ON_DEMAND_BLOCK_FETCH_LIMIT_BY_IP", 20),
+    exp_timeout_coeff: ConfigHelper.parse_integer_env_var("RATE_LIMITER_ON_DEMAND_BLOCK_FETCH_EXP_TIMEOUT_COEFF", 100),
+    max_ban_interval: ConfigHelper.parse_time_env_var("RATE_LIMITER_ON_DEMAND_BLOCK_FETCH_MAX_BAN_INTERVAL", "1h"),
+    limitation_period: ConfigHelper.parse_time_env_var("RATE_LIMITER_ON_DEMAND_BLOCK_FETCH_LIMITATION_PERIOD", "1h")
+  ],
   hammer_backend_module:
     if(rate_limiter_redis_url, do: Explorer.Utility.Hammer.Redis, else: Explorer.Utility.Hammer.ETS)
 
@@ -1054,6 +1061,23 @@ config :indexer, Indexer.Fetcher.OnDemand.CoinBalance,
 
 config :indexer, Indexer.Fetcher.OnDemand.ContractCode,
   threshold: ConfigHelper.parse_time_env_var("CONTRACT_CODE_ON_DEMAND_FETCHER_THRESHOLD", "5s")
+
+config :indexer, Indexer.Fetcher.OnDemand.Block,
+  timeout: ConfigHelper.parse_time_env_var("ON_DEMAND_BLOCK_FETCH_TIMEOUT", "30s"),
+  # Comma-separated list of archive RPC URLs for round-robin load balancing
+  archive_json_rpc_urls: System.get_env("ON_DEMAND_ARCHIVE_JSON_RPC_URLS", ""),
+  # Receipt fetching batch size and concurrency (for RPC batch limits)
+  receipts_batch_size: ConfigHelper.parse_integer_env_var("ON_DEMAND_RECEIPTS_BATCH_SIZE", 5),
+  receipts_concurrency: ConfigHelper.parse_integer_env_var("ON_DEMAND_RECEIPTS_CONCURRENCY", 3)
+
+config :indexer, Indexer.Fetcher.OnDemand.Block.Supervisor,
+  disabled?: ConfigHelper.parse_bool_env_var("ON_DEMAND_BLOCK_FETCH_DISABLED")
+
+config :indexer, Indexer.Fetcher.OnDemand.Transaction,
+  timeout: ConfigHelper.parse_time_env_var("ON_DEMAND_TX_FETCH_TIMEOUT", "45s")
+
+config :indexer, Indexer.Fetcher.OnDemand.Transaction.Supervisor,
+  disabled?: ConfigHelper.parse_bool_env_var("ON_DEMAND_TX_FETCH_DISABLED")
 
 config :indexer, Indexer.Fetcher.OnDemand.TokenInstanceMetadataRefetch,
   threshold: ConfigHelper.parse_time_env_var("TOKEN_INSTANCE_METADATA_REFETCH_ON_DEMAND_FETCHER_THRESHOLD", "5s")
@@ -1672,6 +1696,29 @@ config :libcluster,
       ]
     ]
   ]
+
+######################
+### Database Repos ###
+######################
+
+alias Explorer.Repo.ConfigHelper, as: ExplorerConfigHelper
+
+pool_size = ConfigHelper.parse_integer_env_var("POOL_SIZE", 50)
+queue_target = ConfigHelper.parse_integer_env_var("DATABASE_QUEUE_TARGET", 50)
+
+# Configures primary database
+config :explorer, Explorer.Repo,
+  url: System.get_env("DATABASE_URL"),
+  pool_size: pool_size,
+  ssl: ExplorerConfigHelper.ssl_enabled?(),
+  queue_target: queue_target
+
+# Configures API read-only replica database
+config :explorer, Explorer.Repo.Replica1,
+  url: ExplorerConfigHelper.get_api_db_url(),
+  pool_size: ConfigHelper.parse_integer_env_var("POOL_SIZE_API", 50),
+  ssl: ExplorerConfigHelper.ssl_enabled?(),
+  queue_target: queue_target
 
 Code.require_file("#{config_env()}.exs", "config/runtime")
 

@@ -65,19 +65,13 @@ defmodule Explorer.Chain.Import.Runner.TokenTransfers do
 
     # Enforce TokenTransfer ShareLocks order (see docs: sharelocks.md)
 
-    {ordered_changes_list, conflict_target} =
-      case chain_identity() do
-        {:optimism, :celo} ->
-          {
-            Enum.sort_by(changes_list, &{&1.block_hash, &1.log_index}),
-            [:log_index, :block_hash]
-          }
-
-        _ ->
-          {
-            Enum.sort_by(changes_list, &{&1.transaction_hash, &1.block_hash, &1.log_index}),
-            [:transaction_hash, :log_index, :block_hash]
-          }
+    # Modified for Citus distributed table support
+    # Using PRIMARY KEY columns for conflict resolution
+    # token_transfers table PK: (transaction_hash, log_index) - migration 20181024172010
+    conflict_target =
+      case Application.get_env(:explorer, :chain_type) do
+        :celo -> [:log_index, :block_hash]  # Celo unchanged
+        _ -> [:transaction_hash, :log_index]  # Monad: matches Citus PRIMARY KEY (transaction_hash, log_index)
       end
 
     {:ok, inserted} =

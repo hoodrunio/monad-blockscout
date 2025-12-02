@@ -51,6 +51,7 @@ defmodule Indexer.Fetcher.ContractCode do
 
   @max_batch_size 10
   @max_concurrency 4
+  @fetch_codes_error_log_sample_size 5
   @defaults [
     flush_interval: :timer.seconds(3),
     max_concurrency: @max_concurrency,
@@ -157,11 +158,14 @@ defmodule Indexer.Fetcher.ContractCode do
         }
       )
 
-    with {:ok, succeeded_addresses_params} <- fetch_contract_codes(succeeded, json_rpc_named_arguments),
+    with {:ok, succeeded_addresses_params, failed_contract_code_params} <-
+           fetch_contract_codes(succeeded, json_rpc_named_arguments),
          {:ok, balance_addresses_params} <-
            fetch_balances(succeeded, json_rpc_named_arguments),
          all_addresses_params =
-           Addresses.merge_addresses(succeeded_addresses_params ++ balance_addresses_params) ++ failed_addresses_params,
+           Addresses.merge_addresses(
+             succeeded_addresses_params ++ balance_addresses_params ++ failed_contract_code_params
+           ) ++ failed_addresses_params,
          {:ok, addresses} <- import_addresses(all_addresses_params) do
       zilliqa_verify_scilla_contracts(succeeded, addresses)
       :ok
@@ -176,9 +180,9 @@ defmodule Indexer.Fetcher.ContractCode do
   end
 
   @spec fetch_contract_codes([entry()], keyword()) ::
-          {:ok, [Address.t()]} | {:error, any()}
+          {:ok, [Address.t()], [Address.t()]} | {:error, any()}
   defp fetch_contract_codes([], _json_rpc_named_arguments),
-    do: {:ok, []}
+    do: {:ok, [], []}
 
   defp fetch_contract_codes(entries, json_rpc_named_arguments) do
     entries
@@ -193,7 +197,14 @@ defmodule Indexer.Fetcher.ContractCode do
     |> case do
       {:ok, %{params_list: params, errors: []}} ->
         code_addresses_params = Addresses.extract_addresses(%{codes: params})
-        {:ok, code_addresses_params}
+        {:ok, code_addresses_params, []}
+
+      {:ok, %{params_list: params, errors: errors}} ->
+        code_addresses_params = Addresses.extract_addresses(%{codes: params})
+
+        log_fetch_codes_errors(errors)
+
+        {:ok, code_addresses_params, errors_to_failed_addresses(errors)}
 
       error ->
         error
@@ -226,6 +237,46 @@ defmodule Indexer.Fetcher.ContractCode do
         )
 
         {:error, reason}
+    end
+  end
+
+  defp log_fetch_codes_errors(errors) do
+    Logger.warning(
+      fn ->
+        sample = Enum.take(errors, @fetch_codes_error_log_sample_size)
+
+        [
+          "fetch_contract_codes received ",
+          Integer.to_string(Enum.count(errors)),
+          " errors; first ",
+          Integer.to_string(Enum.count(sample)),
+          ": ",
+          Enum.map(sample, &format_fetch_code_error/1) |> Enum.join(" | ")
+        ]
+      end,
+      error_count: Enum.count(errors)
+    )
+  end
+
+  defp format_fetch_code_error(%{code: code, message: message, data: %{address: address, block_quantity: block_quantity}}) do
+    "code=#{code} address=#{address} block_quantity=#{block_quantity} message=#{message}"
+  end
+
+  defp format_fetch_code_error(error), do: inspect(error)
+
+  defp errors_to_failed_addresses(errors) do
+    Enum.map(errors, fn %{data: %{address: address}} ->
+      %{
+        hash: cast_address_hash(address) || address,
+        contract_code: "0x"
+      }
+    end)
+  end
+
+  defp cast_address_hash(address) do
+    case Hash.Address.cast(address) do
+      {:ok, hash} -> hash
+      :error -> nil
     end
   end
 

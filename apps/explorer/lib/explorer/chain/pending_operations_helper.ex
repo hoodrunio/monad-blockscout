@@ -28,19 +28,18 @@ defmodule Explorer.Chain.PendingOperationsHelper do
   """
   @spec delete_related_transaction_operations([Hash.Full.t()]) :: {non_neg_integer(), nil}
   def delete_related_transaction_operations(transaction_hashes) do
-    pending_operations_query =
-      from(
-        pto in PendingTransactionOperation,
-        where: pto.transaction_hash in ^transaction_hashes,
-        order_by: [asc: :transaction_hash],
-        lock: "FOR UPDATE"
-      )
-
+    # Citus compatibility: Removed FOR UPDATE lock and subquery pattern
+    # Previous implementation used:
+    #   1. Subquery with FOR UPDATE lock
+    #   2. JOIN with that subquery
+    # This pattern triggers "could not run distributed query with FOR UPDATE/SHARE commands" error
+    #
+    # New approach: Direct delete with WHERE IN clause (Citus-compatible)
+    # This is safe for pending operations as they are temporary tracking records
     Repo.delete_all(
       from(
         pto in PendingTransactionOperation,
-        join: s in subquery(pending_operations_query),
-        on: pto.transaction_hash == s.transaction_hash
+        where: pto.transaction_hash in ^transaction_hashes
       )
     )
   end

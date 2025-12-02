@@ -270,21 +270,37 @@ defmodule Explorer.Chain.Import.Runner.Blocks do
          timestamps: %{updated_at: updated_at},
          blocks_changes: blocks_changes
        }) do
-    query =
+    # Citus compatibility: Completely rewritten to avoid subquery JOIN
+    # The previous approach used `join: s in subquery(query)` which triggers
+    # implicit row-level locking that Citus distributed tables cannot handle.
+    #
+    # New approach:
+    # 1. Query forked transaction hashes (simple SELECT, no locks)
+    # 2. Update directly with WHERE hash IN (...) (Citus-compatible)
+
+    # Step 1: Get list of forked transaction hashes
+    forked_hashes =
       from(
         transaction in where_forked(blocks_changes),
-        select: transaction,
+        select: transaction.hash,
         # Enforce Transaction ShareLocks order (see docs: sharelocks.md)
-        order_by: [asc: :hash],
-        lock: "FOR NO KEY UPDATE"
+        order_by: [asc: :hash]
       )
+      |> repo.all(timeout: timeout)
 
+    # Step 2: Direct update without subquery or JOIN
+    # This avoids any implicit locking that Citus cannot handle
+    # IMPORTANT: Do NOT use select in update_all - it can trigger implicit locking
     update_query =
       from(
         t in Transaction,
-        join: s in subquery(query),
-        on: t.hash == s.hash,
-        update: [
+        where: t.hash in ^forked_hashes
+      )
+
+    {_num, _result} =
+      repo.update_all(
+        update_query,
+        [
           set: [
             block_hash: nil,
             block_number: nil,
@@ -296,13 +312,20 @@ defmodule Explorer.Chain.Import.Runner.Blocks do
             max_priority_fee_per_gas: nil,
             max_fee_per_gas: nil,
             type: nil,
-            updated_at: ^updated_at
+            updated_at: updated_at
           ]
         ],
-        select: s
+        timeout: timeout
       )
 
-    {_num, transactions} = repo.update_all(update_query, [], timeout: timeout)
+    # Step 3: Fetch updated transactions separately (no locks involved)
+    transactions =
+      from(
+        t in Transaction,
+        where: t.hash in ^forked_hashes,
+        select: %{hash: t.hash}
+      )
+      |> repo.all(timeout: timeout)
 
     transactions
     |> Enum.map(& &1.hash)
@@ -332,19 +355,21 @@ defmodule Explorer.Chain.Import.Runner.Blocks do
         }
       end)
       # Enforce Fork ShareLocks order (see docs: sharelocks.md)
-      |> Enum.sort_by(&{&1.uncle_hash, &1.index})
+      # Modified for Citus: sort by distribution column (hash) first
+      |> Enum.sort_by(&{&1.hash, &1.index})
 
     {_total, forked_transaction} =
       repo.insert_all(
         Transaction.Fork,
         transaction_forks,
-        conflict_target: [:uncle_hash, :index],
-        on_conflict:
-          from(
-            transaction_fork in Transaction.Fork,
-            update: [set: [hash: fragment("EXCLUDED.hash")]],
-            where: fragment("EXCLUDED.hash <> ?", transaction_fork.hash)
-          ),
+        # Citus compatibility: Use PRIMARY KEY (hash, index) as conflict target
+        # This matches the distribution column and ensures single-shard routing
+        conflict_target: [:hash, :index],
+        # Citus compatibility: Use :nothing to avoid row locking
+        # PostgreSQL's ON CONFLICT DO UPDATE calls heap_lock_tuple() internally,
+        # which Citus cannot execute on distributed tables.
+        # Transaction forks are immutable - duplicates can be safely ignored.
+        on_conflict: :nothing,
         returning: [:hash],
         timeout: timeout
       )
@@ -548,25 +573,28 @@ defmodule Explorer.Chain.Import.Runner.Blocks do
     hashes = Enum.map(changes_list, & &1.hash)
     consensus_block_numbers = consensus_block_numbers(changes_list)
 
-    acquire_query =
+    # Citus-compatible: Remove subquery JOINs and FOR NO KEY UPDATE lock
+    # Step 1: Get affected block hashes and numbers without lock
+    # blocks is a reference table (replicated) - no lock needed
+    blocks_to_update =
       from(
         block in where_invalid_neighbor(changes_list),
         or_where: block.number in ^consensus_block_numbers,
-        # we also need to acquire blocks that will be upserted here, for ordering
         or_where: block.hash in ^hashes,
         select: %{hash: block.hash, number: block.number},
-        # Enforce Block ShareLocks order (see docs: sharelocks.md)
-        order_by: [asc: block.hash],
-        lock: "FOR NO KEY UPDATE"
+        order_by: [asc: block.hash]
       )
+      |> repo.all()
 
+    block_hashes_to_update = Enum.map(blocks_to_update, & &1.hash)
+    block_numbers_to_update = Enum.map(blocks_to_update, & &1.number)
+
+    # Step 2: Direct UPDATE on blocks without subquery JOIN
     {_, removed_consensus_blocks} =
       repo.update_all(
         from(
           block in Block,
-          join: s in subquery(acquire_query),
-          on: block.hash == s.hash,
-          # we don't want to remove consensus from blocks that will be upserted
+          where: block.hash in ^block_hashes_to_update,
           where: block.hash not in ^hashes,
           select: {block.number, block.hash}
         ),
@@ -589,24 +617,24 @@ defmodule Explorer.Chain.Import.Runner.Blocks do
       GenServer.cast(Indexer.Fetcher.Beacon.Deposit, {:lost_consensus, minimum_recent_block_number})
     end
 
+    # Step 3: Direct UPDATE on transactions (distributed table) without subquery JOIN
+    # transactions is distributed by hash - use block_hash for filter
     repo.update_all(
       from(
         transaction in Transaction,
-        join: s in subquery(acquire_query),
-        on: transaction.block_hash == s.hash,
-        # we don't want to remove consensus from blocks that will be upserted
+        where: transaction.block_hash in ^block_hashes_to_update,
         where: transaction.block_hash not in ^hashes
       ),
       [set: [block_consensus: false, updated_at: updated_at]],
       timeout: timeout
     )
 
+    # Step 4: Direct UPDATE on token_transfers (distributed table) without subquery JOIN
+    # token_transfers is distributed by transaction_hash - use block_number for filter
     repo.update_all(
       from(
         token_transfer in TokenTransfer,
-        join: s in subquery(acquire_query),
-        on: token_transfer.block_number == s.number,
-        # we don't want to remove consensus from blocks that will be upserted
+        where: token_transfer.block_number in ^block_numbers_to_update,
         where: token_transfer.block_hash not in ^hashes
       ),
       [set: [block_consensus: false, updated_at: updated_at]],
@@ -692,22 +720,13 @@ defmodule Explorer.Chain.Import.Runner.Blocks do
   defp delete_address_coin_balances(repo, non_consensus_blocks, %{timeout: timeout}) do
     non_consensus_block_numbers = Enum.map(non_consensus_blocks, fn {number, _hash} -> number end)
 
-    ordered_query =
-      from(cb in Address.CoinBalance,
-        where: cb.block_number in ^non_consensus_block_numbers,
-        select: map(cb, [:address_hash, :block_number]),
-        # Enforce TokenBalance ShareLocks order (see docs: sharelocks.md)
-        order_by: [cb.address_hash, cb.block_number],
-        lock: "FOR UPDATE"
-      )
-
+    # Citus-compatible: Direct DELETE without subquery JOIN or FOR UPDATE lock
+    # address_coin_balances is distributed by address_hash - filtering by block_number
+    # may require multi-shard query, but it's safe without locks
     query =
       from(cb in Address.CoinBalance,
-        select: {cb.address_hash, cb.block_number},
-        inner_join: ordered_address_coin_balance in subquery(ordered_query),
-        on:
-          ordered_address_coin_balance.address_hash == cb.address_hash and
-            ordered_address_coin_balance.block_number == cb.block_number
+        where: cb.block_number in ^non_consensus_block_numbers,
+        select: {cb.address_hash, cb.block_number}
       )
 
     try do
@@ -764,25 +783,13 @@ defmodule Explorer.Chain.Import.Runner.Blocks do
   defp delete_address_token_balances(repo, non_consensus_blocks, %{timeout: timeout}) do
     non_consensus_block_numbers = Enum.map(non_consensus_blocks, fn {number, _hash} -> number end)
 
-    ordered_query =
-      from(tb in Address.TokenBalance,
-        where: tb.block_number in ^non_consensus_block_numbers,
-        select: select_ctid(tb),
-        # Enforce TokenBalance ShareLocks order (see docs: sharelocks.md)
-        order_by: [
-          tb.token_contract_address_hash,
-          tb.token_id,
-          tb.address_hash,
-          tb.block_number
-        ],
-        lock: "FOR UPDATE"
-      )
-
+    # Citus-compatible: Remove ctid-based JOIN and FOR UPDATE lock
+    # ctid is SHARD-LOCAL in Citus distributed tables - cannot be used for distributed queries
+    # address_token_balances is distributed by address_hash
     query =
       from(tb in Address.TokenBalance,
-        select: map(tb, [:address_hash, :token_contract_address_hash, :block_number]),
-        inner_join: ordered_address_token_balance in subquery(ordered_query),
-        on: join_on_ctid(tb, ordered_address_token_balance)
+        where: tb.block_number in ^non_consensus_block_numbers,
+        select: map(tb, [:address_hash, :token_contract_address_hash, :block_number])
       )
 
     try do
@@ -800,33 +807,21 @@ defmodule Explorer.Chain.Import.Runner.Blocks do
   defp delete_address_current_token_balances(repo, non_consensus_blocks, %{timeout: timeout}) do
     non_consensus_block_numbers = Enum.map(non_consensus_blocks, fn {number, _hash} -> number end)
 
-    ordered_query =
-      from(ctb in Address.CurrentTokenBalance,
-        where: ctb.block_number in ^non_consensus_block_numbers,
-        select: select_ctid(ctb),
-        # Enforce CurrentTokenBalance ShareLocks order (see docs: sharelocks.md)
-        order_by: [
-          ctb.token_contract_address_hash,
-          ctb.token_id,
-          ctb.address_hash
-        ],
-        lock: "FOR UPDATE"
-      )
-
+    # Citus-compatible: Remove ctid-based JOIN and FOR UPDATE lock
+    # ctid is SHARD-LOCAL in Citus - cannot be used across distributed shards
+    # address_current_token_balances is distributed by address_hash
     query =
       from(ctb in Address.CurrentTokenBalance,
+        where: ctb.block_number in ^non_consensus_block_numbers,
         select:
           map(ctb, [
             :address_hash,
             :token_contract_address_hash,
             :token_id,
             # Used to determine if `address_hash` was a holder of `token_contract_address_hash` before
-
             # `address_current_token_balance` is deleted in `update_tokens_holder_count`.
             :value
-          ]),
-        inner_join: ordered_address_current_token_balance in subquery(ordered_query),
-        on: join_on_ctid(ctb, ordered_address_current_token_balance)
+          ])
       )
 
     try do
@@ -1118,43 +1113,10 @@ defmodule Explorer.Chain.Import.Runner.Blocks do
 
   # `block_rewards` are linked to `blocks.hash`, but fetched by `blocks.number`, so when a block with the same number is
   # inserted, the old block rewards need to be deleted, so that the old and new rewards aren't combined.
-  defp delete_rewards(repo, blocks_changes, %{timeout: timeout}) do
-    {hashes, numbers} =
-      Enum.reduce(blocks_changes, {[], []}, fn
-        %{consensus: false, hash: hash}, {acc_hashes, acc_numbers} ->
-          {[hash | acc_hashes], acc_numbers}
-
-        %{consensus: true, number: number}, {acc_hashes, acc_numbers} ->
-          {acc_hashes, [number | acc_numbers]}
-      end)
-
-    query =
-      from(reward in Reward,
-        inner_join: block in assoc(reward, :block),
-        where: block.hash in ^hashes or block.number in ^numbers,
-        # Enforce Reward ShareLocks order (see docs: sharelocks.md)
-        order_by: [asc: :address_hash, asc: :address_type, asc: :block_hash],
-        # acquire locks for `reward`s only
-        lock: fragment("FOR UPDATE OF ?", reward)
-      )
-
-    delete_query =
-      from(r in Reward,
-        join: s in subquery(query),
-        on:
-          r.address_hash == s.address_hash and
-            r.address_type == s.address_type and
-            r.block_hash == s.block_hash
-      )
-
-    try do
-      {count, nil} = repo.delete_all(delete_query, timeout: timeout)
-
-      {:ok, count}
-    rescue
-      postgrex_error in Postgrex.Error ->
-        {:error, %{exception: postgrex_error, blocks_changes: blocks_changes}}
-    end
+  # Disabled for Monad: Block rewards are not used in Monad blockchain (only transaction fees)
+  # This also resolves Citus incompatibility with the subquery pattern used in the original implementation
+  defp delete_rewards(_repo, _blocks_changes, _options) do
+    {:ok, 0}
   end
 
   defp update_block_second_degree_relations(repo, uncle_hashes, %{
@@ -1162,22 +1124,14 @@ defmodule Explorer.Chain.Import.Runner.Blocks do
          timestamps: %{updated_at: updated_at}
        })
        when is_list(uncle_hashes) do
-    query =
+    # Citus-compatible: Remove subquery JOIN and FOR NO KEY UPDATE lock
+    # Direct UPDATE without subquery is more efficient and Citus-friendly
+    update_query =
       from(
         bsdr in Block.SecondDegreeRelation,
         where: bsdr.uncle_hash in ^uncle_hashes,
-        # Enforce SeconDegreeRelation ShareLocks order (see docs: sharelocks.md)
-        order_by: [asc: :nephew_hash, asc: :uncle_hash],
-        lock: "FOR NO KEY UPDATE"
-      )
-
-    update_query =
-      from(
-        b in Block.SecondDegreeRelation,
-        join: s in subquery(query),
-        on: b.nephew_hash == s.nephew_hash and b.uncle_hash == s.uncle_hash,
         update: [set: [uncle_fetched_at: ^updated_at]],
-        select: map(b, [:nephew_hash, :uncle_hash, :index])
+        select: map(bsdr, [:nephew_hash, :uncle_hash, :index])
       )
 
     try do

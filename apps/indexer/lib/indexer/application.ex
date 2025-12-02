@@ -5,6 +5,7 @@ defmodule Indexer.Application do
 
   use Application
 
+  alias Indexer.Fetcher.OnDemand.Block, as: BlockOnDemand
   alias Indexer.Fetcher.OnDemand.CoinBalance, as: CoinBalanceOnDemand
   alias Indexer.Fetcher.OnDemand.ContractCode, as: ContractCodeOnDemand
   alias Indexer.Fetcher.OnDemand.ContractCreator, as: ContractCreatorOnDemand
@@ -13,6 +14,7 @@ defmodule Indexer.Application do
   alias Indexer.Fetcher.OnDemand.TokenBalance, as: TokenBalanceOnDemand
   alias Indexer.Fetcher.OnDemand.TokenInstanceMetadataRefetch, as: TokenInstanceMetadataRefetchOnDemand
   alias Indexer.Fetcher.OnDemand.TokenTotalSupply, as: TokenTotalSupplyOnDemand
+  alias Indexer.Fetcher.OnDemand.Transaction, as: TransactionOnDemand
   alias Indexer.Fetcher.TokenInstance.Refetch, as: TokenInstanceRefetch
 
   alias Indexer.Memory
@@ -50,6 +52,8 @@ defmodule Indexer.Application do
     base_children = [
       :hackney_pool.child_spec(:token_instance_fetcher, max_connections: pool_size),
       {Memory.Monitor, [%{}, [name: memory_monitor_name]]},
+      {BlockOnDemand.Supervisor, [json_rpc_named_arguments]},
+      {TransactionOnDemand.Supervisor, [json_rpc_named_arguments]},
       {CoinBalanceOnDemand.Supervisor, [[json_rpc_named_arguments: json_rpc_named_arguments]]},
       {TokenBalanceOnDemand.Supervisor, []},
       {ContractCodeOnDemand.Supervisor, [json_rpc_named_arguments]},

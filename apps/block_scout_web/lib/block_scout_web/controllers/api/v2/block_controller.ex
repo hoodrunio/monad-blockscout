@@ -30,12 +30,14 @@ defmodule BlockScoutWeb.API.V2.BlockController do
   import Explorer.MicroserviceInterfaces.Metadata, only: [maybe_preload_metadata: 1]
   import Explorer.Chain.Address.Reputation, only: [reputation_association: 0]
 
+  alias BlockScoutWeb.AccessHelper
   alias BlockScoutWeb.API.V2.{
     Ethereum.DepositController,
     Ethereum.DepositView,
     TransactionView,
     WithdrawalView
   }
+  alias Indexer.Fetcher.OnDemand.Block, as: BlockOnDemand
 
   alias BlockScoutWeb.Schemas.API.V2.ErrorResponses.NotFoundResponse
   alias Explorer.Chain
@@ -159,11 +161,11 @@ defmodule BlockScoutWeb.API.V2.BlockController do
   Function to handle GET requests to `/api/v2/blocks/:block_hash_or_number_param` endpoint.
   """
   @spec block(Plug.Conn.t(), map()) ::
-          {:error, :not_found | {:invalid, :hash | :number}}
+          {:error, :not_found | {:invalid, :hash | :number} | :rate_limited}
           | {:lost_consensus, {:error, :not_found} | {:ok, Explorer.Chain.Block.t()}}
           | Plug.Conn.t()
   def block(conn, %{block_hash_or_number_param: block_hash_or_number}) do
-    with {:ok, block} <- block_param_to_block(block_hash_or_number, @block_params) do
+    with {:ok, block} <- block_param_to_block(block_hash_or_number, @block_params, conn) do
       conn
       |> put_status(200)
       |> render(:block, %{block: block})
@@ -179,8 +181,16 @@ defmodule BlockScoutWeb.API.V2.BlockController do
       {:ok, _block} = ok_response ->
         ok_response
 
-      _ ->
-        {:lost_consensus, Chain.nonconsensus_block_by_number(number, @api_true)}
+      {:error, :not_found} ->
+        # Check if block exists but lost consensus
+        case Chain.nonconsensus_block_by_number(number, @api_true) do
+          {:ok, _block} = lost_consensus_block ->
+            {:lost_consensus, lost_consensus_block}
+
+          {:error, :not_found} ->
+            # Block doesn't exist at all - allow on-demand fetch
+            {:error, :not_found}
+        end
     end
   end
 
@@ -692,9 +702,53 @@ defmodule BlockScoutWeb.API.V2.BlockController do
     end
   end
 
-  defp block_param_to_block(block_hash_or_number, options \\ @api_true) do
+  defp block_param_to_block(block_hash_or_number, options \\ @api_true, conn \\ nil) do
     with {:ok, type, value} <- parse_block_hash_or_number_param(block_hash_or_number) do
-      fetch_block(type, value, options)
+      case fetch_block(type, value, options) do
+        {:ok, _block} = result ->
+          result
+
+        {:error, :not_found} ->
+          # Try on-demand fetch
+          try_on_demand_block_fetch(type, value, options, conn)
+
+        {:lost_consensus, _} = result ->
+          result
+      end
+    end
+  end
+
+  defp try_on_demand_block_fetch(_type, _value, _options, nil), do: {:error, :not_found}
+
+  defp try_on_demand_block_fetch(:hash, hash, options, conn) do
+    ip = AccessHelper.conn_to_ip_string(conn)
+
+    case BlockOnDemand.fetch_by_hash(ip, hash) do
+      {:ok, _block} ->
+        # Re-fetch with full associations
+        Chain.hash_to_block(hash, options)
+
+      {:error, :rate_limited} ->
+        {:error, :rate_limited}
+
+      {:error, _} ->
+        {:error, :not_found}
+    end
+  end
+
+  defp try_on_demand_block_fetch(:number, number, options, conn) do
+    ip = AccessHelper.conn_to_ip_string(conn)
+
+    case BlockOnDemand.fetch_by_number(ip, number) do
+      {:ok, block} ->
+        # Re-fetch with full associations
+        Chain.hash_to_block(block.hash, options)
+
+      {:error, :rate_limited} ->
+        {:error, :rate_limited}
+
+      {:error, _} ->
+        {:error, :not_found}
     end
   end
 end

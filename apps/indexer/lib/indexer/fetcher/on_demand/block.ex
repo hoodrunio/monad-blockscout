@@ -1,0 +1,303 @@
+defmodule Indexer.Fetcher.OnDemand.Block do
+  @moduledoc """
+  Fetches a block on-demand when requested via API and not found in database.
+  Performs full indexing including transactions, receipts, logs, and token transfers.
+
+  Supports multiple archive RPCs with round-robin load balancing:
+  - ON_DEMAND_ARCHIVE_JSON_RPC_URLS: Comma-separated list of archive RPC URLs
+  - Falls back to primary JSON RPC if no archive URLs configured
+  """
+
+  require Logger
+
+  use GenServer
+  use Indexer.Fetcher, restart: :permanent
+
+  alias EthereumJSONRPC.Blocks
+  alias Explorer.Chain
+  alias Explorer.Chain.Hash
+  alias Explorer.Utility.RateLimiter
+  alias Indexer.Block.Fetcher, as: BlockFetcher
+  alias Indexer.Block.Fetcher.Receipts
+  alias Indexer.Transform.{Addresses, TokenTransfers}
+  alias Indexer.Transform.Blocks, as: TransformBlocks
+
+  @default_timeout :timer.seconds(30)
+
+  # Block necessity by association for returning block with preloaded data
+  @block_necessity_by_association %{
+    :transactions => :optional,
+    [miner: [:names, :smart_contract, :proxy_implementations]] => :optional,
+    :nephews => :optional,
+    :rewards => :optional,
+    :withdrawals => :optional
+  }
+
+  @doc """
+  Fetches a block by its hash. Synchronous operation - waits for fetch to complete.
+
+  Returns `{:ok, block}` if successful, `{:error, reason}` otherwise.
+  """
+  @spec fetch_by_hash(String.t() | nil, Hash.Full.t()) ::
+          {:ok, Explorer.Chain.Block.t()} | {:error, term()}
+  def fetch_by_hash(caller \\ nil, hash) do
+    case RateLimiter.check_rate(caller, :on_demand_block_fetch) do
+      :allow ->
+        try do
+          GenServer.call(__MODULE__, {:fetch_by_hash, hash}, timeout())
+        catch
+          :exit, {:timeout, _} -> {:error, :timeout}
+        end
+
+      :deny ->
+        {:error, :rate_limited}
+    end
+  end
+
+  @doc """
+  Fetches a block by its number. Synchronous operation - waits for fetch to complete.
+
+  Returns `{:ok, block}` if successful, `{:error, reason}` otherwise.
+  """
+  @spec fetch_by_number(String.t() | nil, non_neg_integer()) ::
+          {:ok, Explorer.Chain.Block.t()} | {:error, term()}
+  def fetch_by_number(caller \\ nil, number) do
+    case RateLimiter.check_rate(caller, :on_demand_block_fetch) do
+      :allow ->
+        try do
+          GenServer.call(__MODULE__, {:fetch_by_number, number}, timeout())
+        catch
+          :exit, {:timeout, _} -> {:error, :timeout}
+        end
+
+      :deny ->
+        {:error, :rate_limited}
+    end
+  end
+
+  def start_link([init_opts, server_opts]) do
+    GenServer.start_link(__MODULE__, init_opts, server_opts)
+  end
+
+  @impl true
+  def init(json_rpc_named_arguments) do
+    archive_urls = parse_archive_urls()
+
+    {:ok,
+     %{
+       json_rpc_named_arguments: json_rpc_named_arguments,
+       archive_urls: archive_urls,
+       current_index: 0
+     }}
+  end
+
+  @impl true
+  def handle_call({:fetch_by_hash, hash}, _from, state) do
+    {result, new_state} = do_fetch_by_hash(hash, state)
+    {:reply, result, new_state}
+  end
+
+  @impl true
+  def handle_call({:fetch_by_number, number}, _from, state) do
+    {result, new_state} = do_fetch_by_number(number, state)
+    {:reply, result, new_state}
+  end
+
+  # Private implementation
+
+  defp do_fetch_by_hash(hash, state) do
+    hash_string = to_string(hash)
+    max_attempts = max_rpc_attempts(state)
+
+    {result, new_state} = try_fetch_with_retries(state, max_attempts, fn json_rpc_args ->
+      with {:ok, %Blocks{} = blocks_data} <-
+             EthereumJSONRPC.fetch_blocks_by_hash([hash_string], json_rpc_args, true),
+           {:ok, _imported} <- import_block_data(blocks_data, json_rpc_args),
+           {:ok, block} <-
+             Chain.hash_to_block(hash, necessity_by_association: @block_necessity_by_association, api?: true) do
+        {:ok, block}
+      else
+        {:error, :empty_response} ->
+          # Block doesn't exist on this RPC - don't retry, it won't exist on others
+          {:error, :not_found, :no_retry}
+
+        {:error, reason} ->
+          Logger.warning("OnDemand.Block fetch_by_hash failed: #{inspect(reason)}")
+          {:error, reason}
+      end
+    end)
+
+    {result, new_state}
+  end
+
+  defp do_fetch_by_number(number, state) do
+    max_attempts = max_rpc_attempts(state)
+
+    {result, new_state} = try_fetch_with_retries(state, max_attempts, fn json_rpc_args ->
+      with {:ok, %Blocks{} = blocks_data} <-
+             EthereumJSONRPC.fetch_blocks_by_numbers([number], json_rpc_args, true),
+           {:ok, _imported} <- import_block_data(blocks_data, json_rpc_args),
+           {:ok, block} <-
+             Chain.number_to_block(number, necessity_by_association: @block_necessity_by_association, api?: true) do
+        {:ok, block}
+      else
+        {:error, :empty_response} ->
+          # Block doesn't exist on this RPC - don't retry, it won't exist on others
+          {:error, :not_found, :no_retry}
+
+        {:error, reason} ->
+          Logger.warning("OnDemand.Block fetch_by_number failed: #{inspect(reason)}")
+          {:error, reason}
+      end
+    end)
+
+    {result, new_state}
+  end
+
+  # Retry logic: try all RPCs before giving up
+  defp try_fetch_with_retries(state, 0, _fetch_fn) do
+    {{:error, :all_rpcs_failed}, state}
+  end
+
+  defp try_fetch_with_retries(state, attempts_left, fetch_fn) do
+    {json_rpc_args, new_state} = get_next_json_rpc_args(state)
+
+    case fetch_fn.(json_rpc_args) do
+      {:ok, _} = success ->
+        {success, new_state}
+
+      {:error, _reason, :no_retry} ->
+        # Don't retry - the data doesn't exist
+        {{:error, :not_found}, new_state}
+
+      {:error, reason} ->
+        Logger.warning("OnDemand.Block RPC failed, #{attempts_left - 1} attempts remaining: #{inspect(reason)}")
+        try_fetch_with_retries(new_state, attempts_left - 1, fetch_fn)
+    end
+  end
+
+  # Max attempts = number of archive URLs (or 1 if using default RPC)
+  defp max_rpc_attempts(%{archive_urls: []}), do: 1
+  defp max_rpc_attempts(%{archive_urls: urls}), do: length(urls)
+
+  defp import_block_data(
+         %Blocks{
+           blocks_params: blocks_params,
+           transactions_params: transactions_params_without_receipts,
+           block_second_degree_relations_params: block_second_degree_relations_params,
+           withdrawals_params: withdrawals_params
+         },
+         json_rpc_args
+       ) do
+    if Enum.empty?(blocks_params) do
+      {:error, :empty_response}
+    else
+      blocks =
+        blocks_params
+        |> TransformBlocks.transform_blocks()
+        |> Enum.map(&Map.put(&1, :consensus, true))
+
+      # Fetch receipts for transactions
+      receipts_result = fetch_receipts(transactions_params_without_receipts, json_rpc_args)
+
+      case receipts_result do
+        {:ok, %{logs: logs, receipts: receipts}} ->
+          transactions_with_receipts = Receipts.put(transactions_params_without_receipts, receipts)
+
+          # Parse token transfers from logs
+          %{token_transfers: token_transfers, tokens: tokens} = TokenTransfers.parse(logs)
+
+          # Extract addresses
+          addresses =
+            Addresses.extract_addresses(%{
+              blocks: blocks,
+              logs: logs,
+              token_transfers: token_transfers,
+              transactions: transactions_with_receipts,
+              withdrawals: withdrawals_params
+            })
+
+          # Build import options
+          import_options = %{
+            addresses: %{params: addresses},
+            blocks: %{params: blocks},
+            block_second_degree_relations: %{params: block_second_degree_relations_params},
+            logs: %{params: logs},
+            token_transfers: %{params: token_transfers},
+            tokens: %{params: tokens},
+            transactions: %{params: transactions_with_receipts},
+            withdrawals: %{params: withdrawals_params}
+          }
+
+          Chain.import(import_options)
+
+        {:error, reason} ->
+          Logger.warning("OnDemand.Block receipts fetch failed: #{inspect(reason)}")
+          {:error, reason}
+      end
+    end
+  end
+
+  # Default values - can be overridden via ON_DEMAND_RECEIPTS_BATCH_SIZE / ON_DEMAND_RECEIPTS_CONCURRENCY
+  @default_receipts_batch_size 5
+  @default_receipts_concurrency 3
+
+  defp fetch_receipts(transactions_params, json_rpc_args) do
+    config = Application.get_env(:indexer, __MODULE__, [])
+
+    # Create a Block.Fetcher struct with configurable batch size
+    fetcher = %BlockFetcher{
+      json_rpc_named_arguments: json_rpc_args,
+      receipts_batch_size: config[:receipts_batch_size] || @default_receipts_batch_size,
+      receipts_concurrency: config[:receipts_concurrency] || @default_receipts_concurrency
+    }
+
+    # Use the same receipt fetching logic as the main indexer
+    Receipts.fetch(fetcher, transactions_params)
+  end
+
+  # Parse comma-separated archive URLs from config
+  defp parse_archive_urls do
+    config = Application.get_env(:indexer, __MODULE__, [])
+    urls_string = config[:archive_json_rpc_urls] || ""
+
+    urls_string
+    |> String.split(",")
+    |> Enum.map(&String.trim/1)
+    |> Enum.filter(&(&1 != ""))
+  end
+
+  # Round-robin URL selection
+  defp get_next_json_rpc_args(%{archive_urls: [], json_rpc_named_arguments: default_args} = state) do
+    # No archive URLs configured, use default RPC
+    {default_args, state}
+  end
+
+  defp get_next_json_rpc_args(%{archive_urls: urls, current_index: index} = state) do
+    # Round-robin through archive URLs
+    url = Enum.at(urls, index)
+    next_index = rem(index + 1, length(urls))
+
+    json_rpc_args = build_json_rpc_args(url)
+    new_state = %{state | current_index: next_index}
+
+    Logger.debug("OnDemand.Block using archive RPC: #{url} (index: #{index}/#{length(urls)})")
+
+    {json_rpc_args, new_state}
+  end
+
+  defp build_json_rpc_args(url) do
+    [
+      transport: EthereumJSONRPC.HTTP,
+      transport_options: [
+        http: EthereumJSONRPC.HTTP.HTTPoison,
+        urls: [url],
+        http_options: [recv_timeout: timeout(), timeout: timeout()]
+      ]
+    ]
+  end
+
+  defp timeout do
+    Application.get_env(:indexer, __MODULE__)[:timeout] || @default_timeout
+  end
+end
