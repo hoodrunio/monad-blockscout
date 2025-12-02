@@ -94,11 +94,9 @@ defmodule BlockScoutWeb.API.V2.MonadController do
   """
   @spec validators(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def validators(conn, params) do
-    paging_options = paging_options(params)
-
     options =
       @api_true
-      |> Keyword.merge(paging_options: paging_options)
+      |> Keyword.merge(paging_options(params))
       |> Keyword.merge(
         necessity_by_association: %{
           :auth_address => :optional

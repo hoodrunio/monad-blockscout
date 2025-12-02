@@ -91,6 +91,7 @@ defmodule Explorer.Chain.Monad.Validator do
     __MODULE__
     |> order_by([v], asc: v.validator_id)
     |> page_validators(paging_options)
+    |> limit_validators(paging_options)
     |> Chain.join_associations(necessity_by_association)
     |> Chain.select_repo(options).all()
   end
@@ -102,6 +103,12 @@ defmodule Explorer.Chain.Monad.Validator do
   end
 
   defp page_validators(query, _), do: query
+
+  defp limit_validators(query, %Explorer.PagingOptions{page_size: page_size}) when is_integer(page_size) do
+    limit(query, ^(page_size + 1))
+  end
+
+  defp limit_validators(query, _), do: query
 
   @doc """
   Fetches a validator by ID.

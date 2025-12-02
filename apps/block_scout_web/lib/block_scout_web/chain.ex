@@ -688,6 +688,17 @@ defmodule BlockScoutWeb.Chain do
     ]
   end
 
+  # Monad validators pagination
+  def paging_options(%{"validator_id" => validator_id_string}) when is_binary(validator_id_string) do
+    case Integer.parse(validator_id_string) do
+      {validator_id, ""} ->
+        [paging_options: %{@default_paging_options | key: %{validator_id: validator_id}}]
+
+      _ ->
+        [paging_options: @default_paging_options]
+    end
+  end
+
   def paging_options(_params), do: [paging_options: @default_paging_options]
 
   def put_key_value_to_paging_options([paging_options: paging_options], key, value) do
