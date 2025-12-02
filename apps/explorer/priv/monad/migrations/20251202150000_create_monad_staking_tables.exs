@@ -3,36 +3,33 @@ defmodule Explorer.Repo.Monad.Migrations.CreateMonadStakingTables do
   Creates tables for Monad staking data:
   - monad_staking_events: Stores staking events (delegate, undelegate, claim, withdraw)
   - monad_validators: Stores validator state snapshots
+
+  Note: Foreign key constraints are intentionally omitted for Citus compatibility.
+  In Citus distributed PostgreSQL, foreign keys from local/distributed tables to
+  reference tables must be added after the table is distributed.
+  See: citus-migration.sql for FK setup after distribution.
   """
 
   use Ecto.Migration
 
   def change do
     # Staking Events Table
+    # Note: No FK constraints - Citus requires tables to be distributed first
     create table(:monad_staking_events, primary_key: false) do
       add(:block_number, :integer, null: false, primary_key: true)
       add(:log_index, :integer, null: false, primary_key: true)
 
-      add(
-        :transaction_hash,
-        references(:transactions, column: :hash, type: :bytea, on_delete: :delete_all),
-        null: false
-      )
+      # transaction_hash - FK added by citus-migration.sql after distribution
+      add(:transaction_hash, :bytea, null: false)
 
-      add(
-        :block_hash,
-        references(:blocks, column: :hash, type: :bytea, on_delete: :delete_all),
-        null: false
-      )
+      # block_hash - FK added by citus-migration.sql after distribution
+      add(:block_hash, :bytea, null: false)
 
       add(:event_type, :string, null: false)
       add(:validator_id, :integer, null: false)
 
-      add(
-        :delegator_address_hash,
-        references(:addresses, column: :hash, type: :bytea, on_delete: :delete_all),
-        null: false
-      )
+      # delegator_address_hash - FK added by citus-migration.sql after distribution
+      add(:delegator_address_hash, :bytea, null: false)
 
       add(:amount, :numeric, precision: 100, null: false)
       add(:epoch, :integer)
@@ -57,14 +54,12 @@ defmodule Explorer.Repo.Monad.Migrations.CreateMonadStakingTables do
     )
 
     # Validators Table
+    # Note: No FK constraints - Citus requires tables to be distributed first
     create table(:monad_validators, primary_key: false) do
       add(:validator_id, :integer, null: false, primary_key: true)
 
-      add(
-        :auth_address_hash,
-        references(:addresses, column: :hash, type: :bytea, on_delete: :delete_all),
-        null: false
-      )
+      # auth_address_hash - FK added by citus-migration.sql after distribution
+      add(:auth_address_hash, :bytea, null: false)
 
       add(:total_stake, :numeric, precision: 100, null: false)
       add(:consensus_stake, :numeric, precision: 100)
