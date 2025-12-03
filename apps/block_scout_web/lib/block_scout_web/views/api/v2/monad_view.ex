@@ -6,6 +6,7 @@ defmodule BlockScoutWeb.API.V2.MonadView do
   use BlockScoutWeb, :view
 
   alias BlockScoutWeb.API.V2.Helper
+  alias ExSecp256k1
   alias Explorer.Chain.Monad.{StakingEvent, Validator}
 
   @doc """
@@ -183,19 +184,41 @@ defmodule BlockScoutWeb.API.V2.MonadView do
   # Public key formats:
   # - 65 bytes: 0x04 prefix + 64 bytes (uncompressed)
   # - 64 bytes: just the x,y coordinates (uncompressed without prefix)
-  # - 33 bytes: 0x02/0x03 prefix + 32 bytes (compressed) - not supported
+  # - 33 bytes: 0x02/0x03 prefix + 32 bytes (compressed)
   defp secp_pubkey_to_address(nil), do: nil
   defp secp_pubkey_to_address(<<>>), do: nil
 
+  # Uncompressed with 0x04 prefix (65 bytes)
   defp secp_pubkey_to_address(<<0x04, pubkey_bytes::binary-size(64)>>) do
     derive_address_from_pubkey(pubkey_bytes)
   end
 
+  # Uncompressed without prefix (64 bytes)
   defp secp_pubkey_to_address(<<pubkey_bytes::binary-size(64)>>) do
     derive_address_from_pubkey(pubkey_bytes)
   end
 
+  # Compressed with 0x02 prefix (33 bytes)
+  defp secp_pubkey_to_address(<<0x02, _::binary-size(32)>> = compressed) do
+    decompress_and_derive(compressed)
+  end
+
+  # Compressed with 0x03 prefix (33 bytes)
+  defp secp_pubkey_to_address(<<0x03, _::binary-size(32)>> = compressed) do
+    decompress_and_derive(compressed)
+  end
+
   defp secp_pubkey_to_address(_), do: nil
+
+  defp decompress_and_derive(compressed_pubkey) do
+    case ExSecp256k1.public_key_decompress(compressed_pubkey) do
+      {:ok, <<0x04, pubkey_bytes::binary-size(64)>>} ->
+        derive_address_from_pubkey(pubkey_bytes)
+
+      _ ->
+        nil
+    end
+  end
 
   defp derive_address_from_pubkey(pubkey_bytes) when byte_size(pubkey_bytes) == 64 do
     # Keccak-256 hash of the public key, take last 20 bytes
