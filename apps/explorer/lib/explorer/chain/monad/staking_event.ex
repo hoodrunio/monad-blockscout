@@ -121,9 +121,11 @@ defmodule Explorer.Chain.Monad.StakingEvent do
   def get_by_validator(validator_id, options \\ []) do
     paging_options = Keyword.get(options, :paging_options, default_paging_options())
     necessity_by_association = Keyword.get(options, :necessity_by_association, %{})
+    event_types_filter = Keyword.get(options, :event_types, [])
 
     __MODULE__
     |> where([e], e.validator_id == ^validator_id)
+    |> apply_event_type_filter(event_types_filter)
     |> order_by([e], desc: e.block_number, desc: e.log_index)
     |> Chain.join_associations(necessity_by_association)
     |> SortingHelper.page_with_sorting(paging_options, [], @default_sorting)

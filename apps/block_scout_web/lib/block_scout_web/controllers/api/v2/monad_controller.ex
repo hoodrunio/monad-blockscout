@@ -257,6 +257,7 @@ defmodule BlockScoutWeb.API.V2.MonadController do
       options =
         @api_true
         |> Keyword.merge(paging_options(params))
+        |> Keyword.merge(parse_event_type_filter(params))
         |> Keyword.merge(
           necessity_by_association: %{
             :transaction => :optional,
