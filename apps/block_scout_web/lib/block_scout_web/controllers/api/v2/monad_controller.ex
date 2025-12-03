@@ -59,10 +59,14 @@ defmodule BlockScoutWeb.API.V2.MonadController do
           &StakingEvent.next_page_params/1
         )
 
+      # Fetch validator info for secp_address lookup
+      validators_map = get_validators_map_from_events(events)
+
       conn
       |> render(:staking_events, %{
         events: events,
-        next_page_params: next_page_params
+        next_page_params: next_page_params,
+        validators_map: validators_map
       })
     end
   end
@@ -85,13 +89,17 @@ defmodule BlockScoutWeb.API.V2.MonadController do
       {total_delegated, total_unclaimed_rewards, positions} =
         get_position_stats(address_hash)
 
+      # Fetch validator info for secp_address lookup
+      validators_map = get_validators_map(positions)
+
       conn
       |> render(:staking_stats, %{
         total_rewards_claimed: total_rewards_claimed,
         total_delegated: total_delegated,
         total_unclaimed_rewards: total_unclaimed_rewards,
         event_counts: event_counts,
-        positions: positions
+        positions: positions,
+        validators_map: validators_map
       })
     end
   end
@@ -152,6 +160,32 @@ defmodule BlockScoutWeb.API.V2.MonadController do
         unclaimed_rewards: pos[:unclaimed_rewards]
       }
     end)
+  end
+
+  # Fetch validators by IDs and create a map for quick lookup
+  defp get_validators_map([]), do: %{}
+
+  defp get_validators_map(positions) do
+    validator_ids = Enum.map(positions, & &1.validator_id) |> Enum.uniq()
+
+    validator_ids
+    |> Validator.get_by_ids(@api_true)
+    |> Map.new(fn v -> {v.validator_id, v} end)
+  end
+
+  # Fetch validators from events
+  defp get_validators_map_from_events([]), do: %{}
+
+  defp get_validators_map_from_events(events) do
+    validator_ids =
+      events
+      |> Enum.map(& &1.validator_id)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    validator_ids
+    |> Validator.get_by_ids(@api_true)
+    |> Map.new(fn v -> {v.validator_id, v} end)
   end
 
   @doc """
@@ -243,10 +277,14 @@ defmodule BlockScoutWeb.API.V2.MonadController do
           &StakingEvent.next_page_params/1
         )
 
+      # Fetch validator info for secp_address lookup
+      validators_map = get_validators_map_from_events(events)
+
       conn
       |> render(:staking_events, %{
         events: events,
-        next_page_params: next_page_params
+        next_page_params: next_page_params,
+        validators_map: validators_map
       })
     else
       _ -> {:error, :not_found}

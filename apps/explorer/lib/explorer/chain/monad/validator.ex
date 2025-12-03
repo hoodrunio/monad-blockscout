@@ -127,6 +127,16 @@ defmodule Explorer.Chain.Monad.Validator do
   end
 
   @doc """
+  Fetches multiple validators by their IDs.
+  """
+  @spec get_by_ids([integer()], keyword()) :: [t()]
+  def get_by_ids(validator_ids, options \\ []) when is_list(validator_ids) do
+    __MODULE__
+    |> where([v], v.validator_id in ^validator_ids)
+    |> Chain.select_repo(options).all()
+  end
+
+  @doc """
   Fetches validators by auth address.
   """
   @spec get_by_auth_address(Hash.Address.t(), keyword()) :: [t()]
