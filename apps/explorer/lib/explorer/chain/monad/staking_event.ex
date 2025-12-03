@@ -142,7 +142,7 @@ defmodule Explorer.Chain.Monad.StakingEvent do
     |> where([e], e.event_type == :claim)
     |> select([e], sum(e.amount))
     |> Chain.select_repo(options).one()
-    |> Kernel.||(Decimal.new(0))
+    |> wei_to_decimal()
   end
 
   @doc """
@@ -156,7 +156,7 @@ defmodule Explorer.Chain.Monad.StakingEvent do
       |> where([e], e.event_type == :delegate)
       |> select([e], sum(e.amount))
       |> Chain.select_repo(options).one()
-      |> Kernel.||(Decimal.new(0))
+      |> wei_to_decimal()
 
     undelegated =
       __MODULE__
@@ -164,10 +164,15 @@ defmodule Explorer.Chain.Monad.StakingEvent do
       |> where([e], e.event_type in [:undelegate, :withdraw])
       |> select([e], sum(e.amount))
       |> Chain.select_repo(options).one()
-      |> Kernel.||(Decimal.new(0))
+      |> wei_to_decimal()
 
     Decimal.sub(delegated, undelegated)
   end
+
+  # Helper to convert Wei or Decimal to Decimal for arithmetic operations
+  defp wei_to_decimal(%Wei{value: value}), do: value
+  defp wei_to_decimal(%Decimal{} = value), do: value
+  defp wei_to_decimal(nil), do: Decimal.new(0)
 
   @doc """
   Gets event count by type for an address.
