@@ -134,9 +134,15 @@ defmodule BlockScoutWeb.API.V2.MonadController do
 
           {total_delegated, total_unclaimed, format_raw_positions(positions)}
 
-        _ ->
-          # Fallback to event-based calculation if RPC fails
+        {:ok, []} ->
+          # RPC returned empty - user has no active positions
+          {Decimal.new(0), Decimal.new(0), []}
+
+        {:error, _reason} ->
+          # RPC failed - fallback to event-based calculation (may be inaccurate)
           total_delegated = StakingEvent.aggregate_delegations_by_address(address_hash, @api_true)
+          # Ensure non-negative result
+          total_delegated = Decimal.max(total_delegated, Decimal.new(0))
           {total_delegated, Decimal.new(0), []}
       end
     end
