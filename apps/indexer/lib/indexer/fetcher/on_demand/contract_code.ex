@@ -164,8 +164,18 @@ defmodule Indexer.Fetcher.OnDemand.ContractCode do
       {:fetched_code, {:error, _}} ->
         :error
 
+      # EOA case: RPC returned 0x (no code) and address already has no code
+      # Don't add to retry queue - this is expected behavior for EOAs
       _ ->
-        AddressContractCodeFetchAttempt.insert_retries_number(address.hash)
+        # Only retry if there was a genuine fetch issue, not for confirmed EOAs
+        # When fetched_code is nil and address.contract_code is also nil, it's an EOA
+        if is_nil(address.contract_code) do
+          # Delete any existing retry entry for this confirmed EOA
+          AddressContractCodeFetchAttempt.delete(address.hash)
+        else
+          AddressContractCodeFetchAttempt.insert_retries_number(address.hash)
+        end
+
         :error
     end
   end
