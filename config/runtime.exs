@@ -1,5 +1,11 @@
 import Config
 
+# Disable tzdata autoupdate to prevent write errors in read-only containers
+# Set TZDATA_AUTOUPDATE=enabled to re-enable
+if System.get_env("TZDATA_AUTOUPDATE") != "enabled" do
+  config :tzdata, :autoupdate, :disabled
+end
+
 [__DIR__ | ~w(config_helper.exs)]
 |> Path.join()
 |> Code.eval_file()
