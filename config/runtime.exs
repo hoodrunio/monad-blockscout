@@ -312,7 +312,8 @@ config :explorer, Explorer.Chain.Health.Monitor,
 
 # RPC fallback for search endpoint - fetches from RPC when DB returns empty
 config :explorer, Explorer.Chain.Search.RPCFallback,
-  enabled: ConfigHelper.parse_bool_env_var("SEARCH_RPC_FALLBACK_ENABLED", "true")
+  enabled: ConfigHelper.parse_bool_env_var("SEARCH_RPC_FALLBACK_ENABLED", "true"),
+  implementation: Indexer.Search.RPCFallbackImpl
 
 config :explorer, :proxy,
   caching_implementation_data_enabled: true,
