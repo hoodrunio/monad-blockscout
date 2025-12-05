@@ -30,6 +30,7 @@ defmodule Explorer.Chain.Search do
   }
 
   alias Explorer.MicroserviceInterfaces.{Metadata, TACOperationLifecycle}
+  alias Explorer.Chain.Search.RPCFallback
 
   use Utils.CompileTimeEnvHelper, chain_type: [:explorer, :chain_type]
 
@@ -118,9 +119,18 @@ defmodule Explorer.Chain.Search do
           )
 
         {:number, block_number} ->
-          {block_number
-           |> search_block_by_number_query()
-           |> select_repo(options).all(), nil}
+          db_results =
+            block_number
+            |> search_block_by_number_query()
+            |> select_repo(options).all()
+
+          results =
+            case db_results do
+              [] -> RPCFallback.fetch_block_by_number(block_number)
+              _ -> db_results
+            end
+
+          {results, nil}
 
         [{:number, block_number}, {:text, prepared_term}] ->
           prepared_term
@@ -173,13 +183,23 @@ defmodule Explorer.Chain.Search do
   end
 
   defp address_hash_search_if_first_page(%PagingOptions{key: nil}, address_hash, options) do
-    address_hash
-    |> search_token_by_address_hash_query(options)
-    |> union_all(
-      ^(address_hash
-        |> search_address_by_address_hash_query())
-    )
-    |> select_repo(options).all()
+    db_results =
+      address_hash
+      |> search_token_by_address_hash_query(options)
+      |> union_all(
+        ^(address_hash
+          |> search_address_by_address_hash_query())
+      )
+      |> select_repo(options).all()
+
+    case db_results do
+      [] ->
+        # RPC fallback when DB returns empty
+        RPCFallback.fetch_address(address_hash)
+
+      results ->
+        results
+    end
   end
 
   defp address_hash_search_if_first_page(_, _address_hash, _options), do: []
@@ -210,7 +230,19 @@ defmodule Explorer.Chain.Search do
         transaction_block_op_query
       end
 
-    select_repo(options).all(result_query)
+    db_results = select_repo(options).all(result_query)
+
+    case db_results do
+      [] ->
+        # RPC fallback: try transaction first, then block
+        case RPCFallback.fetch_transaction(full_hash) do
+          [] -> RPCFallback.fetch_block_by_hash(full_hash)
+          tx_results -> tx_results
+        end
+
+      results ->
+        results
+    end
   end
 
   defp full_hash_search_if_first_page(_, _full_hash, _options), do: []

@@ -310,6 +310,10 @@ config :explorer, Explorer.Chain.Health.Monitor,
   healthy_blocks_period: ConfigHelper.parse_time_env_var("HEALTH_MONITOR_BLOCKS_PERIOD", "5m"),
   healthy_batches_period: ConfigHelper.parse_time_env_var("HEALTH_MONITOR_BATCHES_PERIOD", "4h")
 
+# RPC fallback for search endpoint - fetches from RPC when DB returns empty
+config :explorer, Explorer.Chain.Search.RPCFallback,
+  enabled: ConfigHelper.parse_bool_env_var("SEARCH_RPC_FALLBACK_ENABLED", "true")
+
 config :explorer, :proxy,
   caching_implementation_data_enabled: true,
   implementation_data_ttl_via_avg_block_time:

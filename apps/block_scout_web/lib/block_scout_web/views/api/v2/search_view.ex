@@ -44,7 +44,8 @@ defmodule BlockScoutWeb.API.V2.SearchView do
       "is_verified_via_admin_panel" => search_result.is_verified_via_admin_panel,
       "certified" => search_result.certified || false,
       "priority" => search_result.priority,
-      "reputation" => search_result.reputation
+      "reputation" => search_result.reputation,
+      "from_rpc" => search_result[:from_rpc] || false
     }
   end
 
@@ -58,7 +59,8 @@ defmodule BlockScoutWeb.API.V2.SearchView do
       "ens_info" => search_result[:ens_info],
       "certified" => if(search_result.certified, do: search_result.certified, else: false),
       "priority" => search_result.priority,
-      "reputation" => search_result.reputation
+      "reputation" => search_result.reputation,
+      "from_rpc" => search_result[:from_rpc] || false
     }
   end
 
@@ -73,7 +75,8 @@ defmodule BlockScoutWeb.API.V2.SearchView do
       "ens_info" => search_result[:ens_info],
       "certified" => if(search_result.certified, do: search_result.certified, else: false),
       "priority" => search_result.priority,
-      "reputation" => search_result.reputation
+      "reputation" => search_result.reputation,
+      "from_rpc" => search_result[:from_rpc] || false
     }
   end
 
@@ -93,35 +96,73 @@ defmodule BlockScoutWeb.API.V2.SearchView do
   end
 
   def prepare_search_result(%{type: "block"} = search_result) do
-    {:ok, block} =
-      Chain.hash_to_block(hash(search_result.block_hash),
-        necessity_by_association: %{
-          :nephews => :optional
-        },
-        api?: true
-      )
+    # Handle both DB results (with block_hash as bytes) and RPC results (with block_hash as Hash)
+    block_hash = get_block_hash(search_result)
 
-    %{
-      "type" => search_result.type,
-      "block_number" => search_result.block_number,
-      "block_hash" => block.hash,
-      "url" => block_path(Endpoint, :show, block.hash),
-      "timestamp" => search_result.timestamp,
-      "block_type" => block |> BlockView.block_type() |> String.downcase(),
-      "priority" => search_result.priority
-    }
+    case Chain.hash_to_block(block_hash,
+           necessity_by_association: %{:nephews => :optional},
+           api?: true
+         ) do
+      {:ok, block} ->
+        %{
+          "type" => search_result.type,
+          "block_number" => search_result.block_number,
+          "block_hash" => block.hash,
+          "url" => block_path(Endpoint, :show, block.hash),
+          "timestamp" => search_result.timestamp,
+          "block_type" => block |> BlockView.block_type() |> String.downcase(),
+          "priority" => search_result.priority,
+          "from_rpc" => search_result[:from_rpc] || false
+        }
+
+      {:error, _} ->
+        # Fallback for RPC results where block might not be fully loaded
+        %{
+          "type" => search_result.type,
+          "block_number" => search_result.block_number,
+          "block_hash" => block_hash,
+          "url" => block_path(Endpoint, :show, block_hash),
+          "timestamp" => search_result.timestamp,
+          "block_type" => "block",
+          "priority" => search_result[:priority] || 0,
+          "from_rpc" => search_result[:from_rpc] || false
+        }
+    end
   end
 
-  def prepare_search_result(%{type: "transaction"} = search_result) do
-    transaction_hash = hash_to_string(search_result.transaction_hash)
+  defp get_block_hash(%{block_hash: %Hash{} = block_hash}), do: block_hash
+  defp get_block_hash(%{block_hash: bytes}) when is_binary(bytes), do: hash(bytes)
+  defp get_block_hash(search_result), do: hash(search_result.block_hash)
 
-    %{
+  def prepare_search_result(%{type: "transaction"} = search_result) do
+    # Handle both DB results (transaction_hash) and RPC results (tx_hash)
+    transaction_hash =
+      cond do
+        Map.has_key?(search_result, :transaction_hash) ->
+          hash_to_string(search_result.transaction_hash)
+
+        Map.has_key?(search_result, :tx_hash) ->
+          hash_to_string(search_result.tx_hash)
+
+        true ->
+          nil
+      end
+
+    base_result = %{
       "type" => search_result.type,
       "transaction_hash" => transaction_hash,
       "url" => transaction_path(Endpoint, :show, transaction_hash),
-      "timestamp" => search_result.timestamp,
-      "priority" => search_result.priority
+      "timestamp" => search_result[:timestamp],
+      "priority" => search_result[:priority] || 0,
+      "from_rpc" => search_result[:from_rpc] || false
     }
+
+    # Add pending flag for pending transactions
+    if search_result[:pending] do
+      Map.put(base_result, "pending", true)
+    else
+      base_result
+    end
   end
 
   def prepare_search_result(%{type: "user_operation"} = search_result) do
