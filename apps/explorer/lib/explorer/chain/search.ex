@@ -133,11 +133,23 @@ defmodule Explorer.Chain.Search do
           {results, nil}
 
         [{:number, block_number}, {:text, prepared_term}] ->
-          prepared_term
-          |> search_by_string(paging_options, [], options)
-          |> union_all(^search_block_by_number_query(block_number))
-          |> order_and_page_text_search_result(paging_options)
-          |> select_repo(options).all()
+          db_results =
+            prepared_term
+            |> search_by_string(paging_options, [], options)
+            |> union_all(^search_block_by_number_query(block_number))
+            |> order_and_page_text_search_result(paging_options)
+            |> select_repo(options).all()
+
+          # Check if block was found in results, if not try RPC fallback
+          results =
+            if Enum.any?(db_results, fn r -> r.type == "block" and r.block_number == block_number end) do
+              db_results
+            else
+              rpc_block = RPCFallback.fetch_block_by_number(block_number)
+              db_results ++ rpc_block
+            end
+
+          results
           |> trim_list_and_prepare_next_page_params(paging_options, query_string, %{}, false)
 
         {:text, prepared_term} ->
